@@ -1,0 +1,830 @@
+#!/usr/bin/perl
+use strict;
+use warnings;
+use Env qw/HOME/;
+use Getopt::Long;
+use File::Copy;
+use Digest::MD5;
+use Data::Dump qw/dump/;
+use IO::File;
+use File::Basename qw/dirname/;
+
+# dump(\%ENV);
+# exit 0;
+# my $id = `whoami`;
+# unless($id =~ /root/) {
+#    die "dock must be run by root!!!!";
+# }
+my ($uid, $gid) = (stat $0)[4, 5];    # warn "$uid, $gid"; exit 0;
+my $gw;                               # 网关
+my $group;                            # app组
+my @container;                        # 相关的容器
+my $cmd;                              # start, stop, restart
+my $config;                           # dock.conf配置
+my $config_file;                      # 配置文件路径
+
+my $rtn = GetOptions(
+    "config|c=s"  => \$config_file,
+);
+unless($rtn) {
+    warn "command syntax error";
+    &usage;
+}
+
+# warn "ARGV = [@ARGV]";
+$config_file ||= $ENV{DOCKIT_CONFIG};
+unless($config_file) {
+    &usage;
+}
+
+unless( -f $config_file) {
+    die "File[$config_file] does not exist";
+}
+
+my $main = do $config_file;   # 主配置文件
+unless($main) {
+    warn "can not parse[$config_file] error[$@]";
+    exit 0;
+}
+
+# dump($main);
+$group = $main->{group};
+$gw    = $main->{gateway};
+my $dir = dirname($config_file);
+my $glob = "$dir/$main->{container}";
+my @cont_file = glob($glob);
+for my $cfile (@cont_file) {
+    unless($cfile =~ /([^\/]+)\.pl/) {
+        die "File[$cfile] file name is invalid";
+    }
+    my $c = $1;
+    $config->{$c} = do $cfile; 
+    unless($config->{$c}) {
+        die "can not parse[$cfile] error[$@]";
+    }
+}
+
+for my $c (keys %$config) {
+    # 容器mount替换变量替换
+    for my $m (keys %{$config->{$c}{mount}}) {
+        my $mcfg = $config->{$c}{mount}{$m};
+        for my $e ( keys %ENV) {
+            $mcfg->{from} =~ s/\$$e/$ENV{$e}/;
+        }
+    }
+
+    # 用户
+    for my $u (keys %{$config->{$c}{users}}) {
+        my $ucfg = $config->{$c}{users}{$u};
+        for my $e ( keys %ENV) {
+            $ucfg->{home}{from} =~ s/\$$e/$ENV{$e}/;
+        }
+        for my $m (keys %{$ucfg->{mount}}) {
+            my $mcfg = $ucfg->{mount}{$m};
+            for my $e ( keys %ENV) {
+                $mcfg->{from} =~ s/\$$e/$ENV{$e}/;
+            }
+        }
+    }
+}
+# dump($config);
+# exit 0;
+my @gen_args;
+if ($ARGV[0] !~ /list|check/) {
+    if(@ARGV < 2) {
+        warn "insufficient arguments";
+        &usage;
+    }
+    $cmd  =  shift @ARGV;   # start/stop/restart
+
+    my $cont_arg;
+    if ($cmd !~ /^(run|del|start|stop|restart|up|down|clean|gen)$/) {
+        &usage;
+    } 
+
+    # 非gen命令, 后面是容器
+    unless($cmd =~ /gen/) { 
+        my $c = shift @ARGV;    #
+        my @tc;
+        if ($c =~ /all/) {  # 如果container名称为all就是所有container
+            @tc = ();
+        } else {
+            push @tc, $c, @ARGV,
+        }
+        for my $t (@tc) {
+            unless( exists($config->{$t}) ) {
+                die "container[$t] does not exist";
+            }
+        }
+        @container = @{&ordered_container(@tc)};
+    } else {
+        @gen_args = @ARGV;
+    }
+} else {
+    $cmd = $ARGV[0];
+}
+
+warn "cmd[$cmd]";
+
+my $clist = &container_list;   # 当前系统docker容器列表
+# warn "当前docker容器列表:\n";
+# dump($clist);
+
+
+# 创建并运行容器
+if($cmd =~ /run/) {
+    &check();
+    for my $c (@container) {
+        if ($clist->{"$c.$group"}) {
+            warn "WARNING: container[$c.$group] already exist\n"; 
+        } else {
+            warn "begin run container[$c.$group]...\n";
+            &run($c);
+        }
+    }
+}
+
+# 删除所有容器
+elsif($cmd =~ /del/) {
+    &check();
+    for my $c (@container) {
+        if ($clist->{"$c.$group"}) {
+            if ($clist->{"$c.$group"}) {
+               warn "WARNING: container[$c.$group] still running, I stop it now!!!\n";
+               &stop($c);
+            }
+            warn "begin del container[$c.$group]...\n";
+            &del($c);
+        } else {
+            warn"WARNING: container[$c.$group] doe not exist\n";
+        }
+    }
+}
+
+# 启动已经存在的容器
+elsif ($cmd =~ /start/) {
+    &check();
+    for my $c (@container) {
+        unless($clist->{"$c.$group"}) {
+            warn "ERROR: container[$c.$group] does not exist, I will run it....\n";
+            &run($c);
+        }
+        else {
+            if ($clist->{"$c.$group"} =~ /up/) {
+                warn "WARNING:  container[$c.$group] already running\n";
+            } else {
+                warn "begin start container[$c.$group]...\n";
+                &start($c);
+            }
+        }
+    }
+}
+
+# 停止容器
+elsif ($cmd =~ /stop/) {
+    &check();
+    for my $c (reverse @container) {
+        unless( $clist->{"$c.$group"} ) {
+            warn "WARN: container[$c.$group] does not exist, can not stop it\n";
+        } else {
+            if ($clist->{"$c.$group"} =~ /down/) {
+                warn "WARNING: container[$c.$group] already stopped\n";
+            } else {
+                warn "begin stop container[$c.$group]...\n";
+                &stop($c);
+            }
+        }
+    }
+}
+
+# 重启已经存在的容器
+elsif($cmd =~ /restart/) {
+    &check();
+    for my $c (reverse @container) {
+        unless( $clist->{"$c.$group"} ) {
+            warn "WARN: container[$c.$group] does not exist, can not stop it\n";
+        } else {
+            if ($clist->{"$c.$group"} =~ /down/) {
+                warn "WARNING: container[$c.$group] already stopped\n";
+            } else {
+                warn "begin stop container[$c.$group]...\n";
+                &stop($c);
+            }
+        }
+    }
+    for my $c (@container) {
+        unless( $clist->{"$c.$group"} ) {
+            warn "ERROR: container[$c.$group] does not exist, I will run it...\n";
+            &run($c);
+        } else {
+            if ($clist->{"$c.$group"} =~ /up/) {
+                warn "WARNING: container[$c.$group] already started\n";
+            } else {
+                warn "begin start container[$c.$group]...\n";
+                &start($c);
+            }
+        }
+    }
+}
+
+# 启动容器里的应用: 前提是容器以及启动， 只是其中应用没有启动
+elsif($cmd =~ /up/) {
+    &check();
+    for my $c (reverse @container) {
+        unless( $clist->{"$c.$group"} ) {
+            warn "WARN: container[$c.$group] does not exist, can not up it\n";
+        } else {
+            if ($clist->{"$c.$group"} =~ /down/) {
+                warn "WARNING: container[$c.$group] already stopped, can not up it\n";
+            } else {
+                warn "begin up container[$c.$group]...\n";
+                &up($c);
+            }
+        }
+    }
+    
+}
+
+# 启动容器里的应用: 前提是容器以及启动, 且容器中的应用也已经启动
+elsif($cmd =~/down/) {
+    &check();
+    for my $c (reverse @container) {
+        unless( $clist->{"$c.$group"} ) {
+            warn "WARN: container[$c.$group] does not exist, can not down it\n";
+        } else {
+            if ($clist->{"$c.$group"} =~ /down/) {
+                warn "WARNING: container[$c.$group] already stopped, can not down it\n";
+            } else {
+                warn "begin down container[$c.$group]...\n";
+                &down($c);
+            }
+        }
+    }
+    
+}
+
+# 清理容器中的应用垃圾
+elsif($cmd =~ /clean/) {
+    &check();
+    for my $c (reverse @container) {
+        unless( $clist->{"$c.$group"} ) {
+            warn "WARN: container[$c.$group] does not exist, can not clean it\n";
+        } else {
+            if ($clist->{"$c.$group"} =~ /down/) {
+                warn "WARNING: container[$c.$group] already stopped, can not clean it\n";
+            } else {
+                warn "begin clean container[$c.$group]...\n";
+                &clean($c);
+            }
+        }
+    }
+}
+
+# 检查配置文件
+elsif($cmd =~ /check/) {
+    &check;
+    warn "Congratuation!!! \nconfig file[$config_file] is OK\n";
+}
+
+# 生成容器配置文件
+elsif($cmd =~ /gen/) {
+    for my $g (@gen_args) {
+        my $fh = IO::File->new(">$g");
+        $fh->print(<<'EOF_STR');
+{
+    image => 'itsbase:1.0',              # 用什么image启动
+    order => 1,                          # 启动顺序
+    ip    => '172.17.102.1',             # 容器的IP地址设置
+    port  => { },
+    start => 'service memcached start',  # 需要启动的系统服务
+    stop  => 'service memcached stop',   # 停止时需要停止系统服务
+    clean => undef,
+
+    # 全局级挂载, 挂载只读软件
+    mount => {
+        jdk => {
+            from => '$HOME/opt/jdk1.6.0_43',     # 软件的宿主机位置
+            to   => '/opt/jdk',                  # 挂载到容器的什么位置
+        },
+        activemq => {
+            from => '$HOME/opt/apache-activemq-5.10.0',
+            to   => '/opt/activemq',
+        }
+    },
+
+    # 用户级配置
+    users => {
+
+        # 为容器新建用户: itsapp
+        itsapp => {
+            order => 1,                                       # 用户启动顺序
+            home  => {                                        # 用户HOME目录的挂载
+                from => '$HOME/appstore/tst/its-activemq',    # 宿主机位置
+                to   => '/itsapp',                            # 应用用户在容器中的home路径
+            },
+            start => 'activemq start',  # 启动命令
+            stop  => 'activemq stop',   # 停止命令
+            clean => undef,             # 用户程序的清理命令
+
+            # 用户环境变量配置: 注意顺序!!!
+            env => [
+                [ 'JAVA_HOME',     '/opt/jdk' ],
+                [ 'ACTIVEMQ_HOME', '/opt/activemq' ],
+                [ 'PATH',          '/opt/jdk/bin:$ACTIVEMQ_HOME/bin:$HOME/bin:/sbin:$PATH' ],
+            ],
+        },
+    }
+};
+EOF_STR
+    }
+}
+
+elsif($cmd =~/list/) {
+    dump($clist);
+}
+
+# 启动容器!!!!!!
+sub usage {
+    die <<EOF;
+Usage:
+    dockit -c config_file run|start|stop|up|down|restart all|container_list
+                          gen file1 file2 file3
+                          list
+    如果存在环境变量DOCKIT_CONFIG的话, 那么-c config_file可以不用
+
+Example 1: 创建并启动所有容器, 以及容器中的应用
+    dockit -c config_file run all
+    dockit -c config_file run its-app its-mng
+
+Example 2: 启动容器, 以及容器中的应用
+    dockit -c config_file start all
+    dockit -c config_file start its-app
+
+Example 3: 启动容器, 以及容器中的应用
+    dockit -c config_file stop all
+    dockit -c config_file stop its-app its-mng
+
+Example 4: 启动容器中的应用
+    dockit -c config_file up all
+    dockit -c config_file up its-app its-mng
+
+Example 5: 停止容器中的应用
+    dockit -c config_file down all
+    dockit -c config_file down its-app its-mng
+
+Example 6: 重启所有容器
+    dockit -c config_file restart all
+    dockit -c config_file restart its-app its-mng
+
+Example 7: 清理容器中的应用垃圾
+    dockit -c config_file clean all
+    dockit -c config_file clean its-app its-mng
+
+Example 8: 列出当前系统中的容器以及状态
+    dockit -c config_file list
+
+EOF
+}
+
+# 按container的启动顺序返回待操作的container
+sub ordered_container {
+    my @c = @_;
+    @c = keys %$config if @c == 0;
+    return [ sort { $config->{$a}{order} <=> $config->{$b}{order} } @c ];
+}
+
+
+# 计算文件md5
+sub md5 {
+    my $filename = shift;
+    open (my $fh, '<', $filename) or die "Can't open '$filename': $!";
+    binmode ($fh);
+    Digest::MD5->new->addfile($fh)->hexdigest
+}
+
+# 创建docker容器, 运行容器
+sub run {
+    my $c = shift;   # 要运行那个docker容器
+
+    my $run_cmd;    # 建立docker 容器
+    my $ip_cmd;     # 配置容器IP
+    my $user_cmd;   # 建立所有应用用户
+    my $sys_cmd;    # 启动系统服务
+    my $start_cmd;  # 按顺序启动用户服务
+
+    my @users = &ordered_user($c);  # 返回排序好的user;
+
+    # 安装用户文件: .bash_profile,  以及packages
+    for my $u (@users) {
+        &install_user($c, $u);
+    }
+
+    ###############
+    # run_cmd
+    my $g_docker = &global_docker($c);  # dump($g_docker);
+    my @vstr  = @{$g_docker->[0]};
+    for my $u (keys %{$config->{$c}{users}}) {
+        my $u_docker = &user_docker($c, $u);
+        push @vstr, @$u_docker;
+    }
+    my $vstr = join(" ", @vstr);
+    my $pstr = $g_docker->[1];
+    my $image = $config->{$c}{image};
+    $run_cmd = "docker run -i -t -d --name $c.$group -h $c $pstr $vstr $image /bin/bash; ";
+
+    ###############
+    # ip_cmd
+    my $ip    = $config->{$c}{ip};
+    $ip_cmd = "pipework docker0 $c.$group $ip/24\@$gw;";
+
+    ###############
+    # user_cmd
+    $user_cmd = &user_cmd($c);
+  
+    ###############
+    # sys_cmd
+    my $sys_start = $config->{$c}{start} || "echo >/dev/null";
+    $sys_cmd = "docker exec $c.$group $sys_start;";
+
+    ###############
+    # start_cmd
+    $start_cmd = &user_start_cmd($c);
+
+    # 启动容器!!!!!
+    my $cmd = <<"RUN_STRING";
+$run_cmd
+$user_cmd 
+$ip_cmd
+$sys_cmd 
+$start_cmd
+RUN_STRING
+    # warn "begin run[\n$cmd]";
+    root($cmd);
+}
+
+#
+# 容器的用户启动命令
+#
+sub user_start_cmd {
+    my $c = shift;
+    my @users = &ordered_user($c);  # 返回排序好的user;
+
+    my @scmd;
+    for my $u (@users) {
+        my $start = $config->{$c}{users}{$u}{start};
+        push @scmd, "docker exec $c.$group su -l $u -c '$start';";
+    }
+    my $start_cmd = join("\n", @scmd);
+    return $start_cmd;
+}
+
+#
+#
+#
+sub user_cmd {
+    my $c = shift;
+    
+    my @users = &ordered_user($c);
+    # user_cmd
+    my @ucmd;
+    for my $u (@users) {
+        my $home = $config->{$c}{users}{$u}{home}{to};
+        push @ucmd, "docker exec $c.$group useradd -u $uid -g $gid -s /bin/bash -d $home $u >/dev/null 2>&1;";
+    }
+    my $user_cmd = join("\n", @ucmd);
+    return $user_cmd;
+}
+
+# 全局级配置
+# 1. 需要挂载那些volume
+# 2. 需要映射那些端口
+sub global_docker {
+    my $c = shift;
+    my $cfg = $config->{$c};   # 容器配置
+
+
+    ##############
+    # volume 参数
+    my $mount = $cfg->{mount};
+    my @g_vstr;
+    for my $m (values %$mount) {
+        my $from = $m->{from}; 
+        my $to = $m->{to};
+        my $readonly = $m->{readonly};
+        unless( -d $from) {
+            die "directory[$to] does not exist";
+        }
+        if ($readonly) {
+            push @g_vstr, "-v $from:$to:ro";  # 只读
+        } else {
+            push @g_vstr, "-v $from:$to";  # 只读
+        }
+    }
+
+    ##############
+    # port参数
+    my $port  = $cfg->{port};
+    my @g_pstr; 
+    for my $p (keys %$port) {
+        push @g_pstr, "-p $port->{$p}:$p"; 
+    }
+    my $g_pstr = join " ", @g_pstr;
+
+    return [\@g_vstr, $g_pstr];
+}
+
+#
+# 用户安装: .bash_profile, packages
+#
+sub install_user {
+    my ($c, $u) = @_;
+    &install_profile($c, $u);  # 安装用户profile
+    &install_packages($c, $u);              # 安装用户package;
+}
+
+# 安装某个用户的profile
+sub install_profile {
+    my ($c, $u) = @_;
+
+    my @estr;
+    for my $e (@{$config->{$c}{users}{$u}{env}}) {
+        push @estr, "export $e->[0]=$e->[1]\n";
+    }
+    ############
+    # 需要安装的bash_profile
+    my $estr = join "\n", @estr;
+    my $profile =<<"EOF";
+alias rm='rm -i'
+alias cp='cp -i'
+alias mv='mv -i'
+
+# Source global definitions
+if [ -f /etc/bashrc ]; then
+    . /etc/bashrc
+fi
+set -o vi
+$estr
+EOF
+
+    my $file = "$config->{$c}{users}{$u}{home}{from}/.bash_profile";
+    my $fh = IO::File->new(">$file");
+    $fh->print($profile);
+    $fh->close(); 
+    # warn "profile is created for[$c][$u]";
+}
+
+# 安装部署包
+sub install_packages {
+    my ($c, $u) = @_;
+
+    my $home = $config->{$c}{users}{$u}{home}{from};
+
+    my $pkgs = $config->{$c}{users}{$u}{packages};
+    for my $pkg (keys %$pkgs) {
+        my $from = $pkgs->{$pkg}{from};
+        my $to   = "$home/$pkgs->{$pkg}{to}";
+
+        # 软件中心不存在这个war
+        unless( -f $from) {
+            die "应用[$pkg]$from不存在";
+        }
+
+        # 容器中不存在war, 开始install
+        unless( -f $to) {
+            warn "install package[$from, $to]...";
+            copy($from, $to);
+            # system("chown $uid:$gid $to");
+            return;
+        } 
+        # 容器中存在, 则依据md5是否需要更新!!
+        else {
+            my $md5_from = &md5($from);
+            my $md5_to   = &md5($to);
+            unless($md5_from eq $md5_to) {
+                warn "install package[$from, $to]...";
+                copy($from, $to);
+                # system("chown $uid:$gid $to");
+            }
+        }
+    } 
+}
+
+#
+# 用户级别参数
+# 1. 安装用户profile
+# 2. 安装用户package
+# 3. 需要挂载那些package
+#
+sub user_docker {
+    my $c    = shift;
+    my $user = shift;
+
+    my $cfg   = $config->{$c}{users}{$user};
+    my $home  = $cfg->{home};  # dump($home);
+    my $start = $cfg->{start};
+    my $store = $cfg->{store};
+    my $mount = $cfg->{mount};
+
+    ##############
+    # volume 参数
+    my @vstr;    # -v 参数:  包括mount + 应用home目录
+    for my $m (values %$mount) {
+        push @vstr, "-v $m->{from}:$m->{to}";
+    }
+    push @vstr, "-v $home->{from}:$home->{to}";
+
+    return \@vstr;
+}
+
+
+
+# 按用户启动顺序返回应用用户
+sub ordered_user {
+    my $c = shift;
+    my $users = $config->{$c}{users}; 
+    my @u = keys %$users;
+    return sort { $users->{$a}{order} <=> $users->{$b}{order} } @u;
+}
+
+# 删除docker容器
+sub del {
+    my $c = shift;
+    my $cfg = $config->{$c};
+    my $cmd =<<RUN_STRING;
+docker rm $c.$group
+RUN_STRING
+    root($cmd);
+}
+
+
+#
+# 停止容器: 
+# todo:  1. 先docker exec进入容器内停止用户应用
+#        2. 再docker exec进入容器内停止系统应用
+#        3. 最后docker stop 容器
+#
+sub stop {
+    my $c = shift;
+    my $cfg = $config->{$c};
+    my $stop = $config->{$c}{stop};
+
+    my @ustop;
+    my @users = reverse &ordered_user($c);
+    for my $u (@users) {
+        push @ustop, "docker exec $c.$group su -l $u -c '$cfg->{users}{$u}{stop}'";
+    }
+    my $ustop = join("\n", @ustop);
+    
+    my $cmd =<<RUN_STRING;
+$ustop
+docker exec $c.$group $stop
+docker stop $c.$group;
+RUN_STRING
+    # warn "stop[$cmd]";
+    root($cmd);
+}
+
+#
+#  启动容器
+#
+sub start {
+    my $c = shift;
+    my $cfg = $config->{$c};
+    my $start = $cfg->{start} || "echo >/dev/null";
+    my $ip    = $cfg->{ip};
+
+    my $start_cmd = &user_start_cmd($c);
+
+    my $cmd =<<RUN_STRING;
+docker start $c.$group;
+pipework docker0 $c.$group $ip/24\@$gw;
+docker exec $c.$group $start;
+$start_cmd
+RUN_STRING
+    # warn "begin cmd[$cmd]";
+    root($cmd);
+}
+
+sub up {
+    my $c = shift;
+    my $cfg = $config->{$c};
+    my $start = $cfg->{start} || "echo >/dev/null";
+    my $start_cmd = &user_start_cmd($c);
+    my $cmd =<<RUN_STRING;
+docker exec $c.$group $start;
+$start_cmd
+RUN_STRING
+    root($cmd);
+}
+
+sub down {
+    my $c = shift;
+    my $cfg = $config->{$c};
+    my $stop = $config->{$c}{stop};
+
+    my @ustop;
+    my @users = reverse &ordered_user($c);
+    for my $u (@users) {
+        push @ustop, "docker exec $c.$group su -l $u -c '$cfg->{users}{$u}{stop}'";
+    }
+    my $ustop = join("\n", @ustop);
+    
+    my $cmd =<<RUN_STRING;
+$ustop
+docker exec $c.$group $stop
+RUN_STRING
+    # warn "stop[$cmd]";
+    root($cmd);
+}
+
+sub clean {
+    my $c = shift;
+    my $cfg = $config->{$c};
+    my $clean = $config->{$c}{clean} || "echo > /dev/null";
+
+    my @uclean;
+    my @users = reverse &ordered_user($c);
+    for my $u (@users) {
+        my $clear = $cfg->{users}{$u}{clean} || "echo >/dev/null";
+        push @uclean, "docker exec $c.$group su -l $u -c '$clear'";
+    }
+    my $uclean = join("\n", @uclean);
+    
+    my $cmd =<<RUN_STRING;
+$uclean
+docker exec $c.$group $clean
+RUN_STRING
+    # warn "clean[$cmd]";
+    root($cmd);
+}
+
+# 配置文件检查
+sub check {
+    my $line = <ifconfig | grep inet addr:$gw>;
+    unless($line) {
+        die "invalid gateway[$gw]";
+    }
+    for my $c (keys %$config) {
+        my $mount = $config->{$c}{mount};
+        for my $m (values %$mount) {
+            unless( -d $m->{from} || -f $m->{from} ) {
+                die "File or Directory[$m->{from}] does not exist";
+            }
+        }
+        my $users = $config->{$c}{users};
+        for my $u (keys %$users) {
+            my $h = $users->{$u}{home};
+            unless( -d $h->{from}) {
+                die "Directory[$h->{from}] does not exist";
+            }
+            my $um = $users->{$u}{mount};
+            for my $m (values %$um) {
+                unless( -d $m->{from} && -f $m->{from} ) {
+                    die "File or Directory[$m->{from}] does not exist";
+                }
+            }
+        }
+    }
+    return 1;
+}
+
+# 获取当前group中的docker容器的状态!!!
+sub container_list {
+    open FH, 'sudo docker ps -a |';
+    <FH>;
+    my %used;
+    while(<FH>) {
+        my @fld = split;
+        my $name = $fld[-1];
+        if ($name =~ /\.$group/) {
+            # warn "$name => $status";
+            my $left = join(" ", splice(@fld, 3));
+            # warn "left[$left]";
+            if ($left =~ /^(\d+ (weeks|seconds|minutes|hours|days)|(About)).* ago Up/) {
+                $used{$name} = "up";
+            } else {
+                $used{$name} = "down";
+            }
+        }
+    }    
+    return \%used;
+}
+
+sub root {
+    my $cmd = shift;
+    system("rm -fr /tmp/.dock-*.sh"); 
+    my $fname = "/tmp/.dock-$$.sh";
+    my $fh = IO::File->new(">/tmp/.dock-$$.sh");
+    $fh->print(<<EOF);    
+#!/bin/bash
+$cmd
+EOF
+    $fh->close();
+    system("chmod +x $fname");
+    system("sudo $fname");
+    system("rm $fname");
+}
+
+__END__
+
+
