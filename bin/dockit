@@ -248,6 +248,7 @@ sub user_cmd {
     my @ucmd;
     for my $u (@users) {
         my $home = $config->{$c}{users}{$u}{home}{to};
+        push @ucmd, "docker exec $c.$group groupadd -g $gid harydockit >/dev/null 2>&1;";
         push @ucmd, "docker exec $c.$group useradd -u $uid -g $gid -s /bin/bash -d $home $u >/dev/null 2>&1;";
     }
     my $user_cmd = join("\n", @ucmd);
