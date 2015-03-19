@@ -9,95 +9,45 @@ use Data::Dump qw/dump/;
 use IO::File;
 use File::Basename qw/dirname/;
 
-# dump(\%ENV);
-# exit 0;
-# my $id = `whoami`;
-# unless($id =~ /root/) {
-#    die "dock must be run by root!!!!";
-# }
 my ($uid, $gid) = (stat $0)[4, 5];    # warn "$uid, $gid"; exit 0;
 my $gw;                               # 网关
 my $group;                            # app组
 my @container;                        # 相关的容器
+my @gen_args;                         # 如果是gen命令, 后面是文件列表
 my $cmd;                              # start, stop, restart
 my $config;                           # dock.conf配置
 my $config_file;                      # 配置文件路径
+my $clist;
 
+my $help;
 my $rtn = GetOptions(
+    "help|h"      => \$help,
     "config|c=s"  => \$config_file,
 );
 unless($rtn) {
     warn "command syntax error";
     &usage;
 }
+&usage if $help;  
+$cmd = shift @ARGV;   # 命令!!!
 
-# warn "ARGV = [@ARGV]";
-$config_file ||= $ENV{DOCKIT_CONFIG};
-unless($config_file) {
-    &usage;
-}
-
-unless( -f $config_file) {
-    die "File[$config_file] does not exist";
-}
-
-my $main = do $config_file;   # 主配置文件
-unless($main) {
-    warn "can not parse[$config_file] error[$@]";
-    exit 0;
-}
-
-# dump($main);
-$group = $main->{group};
-$gw    = $main->{gateway};
-my $dir = dirname($config_file);
-my $glob = "$dir/$main->{container}";
-my @cont_file = glob($glob);
-for my $cfile (@cont_file) {
-    unless($cfile =~ /([^\/]+)\.pl/) {
-        die "File[$cfile] file name is invalid";
-    }
-    my $c = $1;
-    $config->{$c} = do $cfile; 
-    unless($config->{$c}) {
-        die "can not parse[$cfile] error[$@]";
+# 非gen命令， 才需要解析配置文件
+unless($cmd =~ /gen/) {   
+    &read_config;     # 读取配置文件
+    &substitue;       # 替换环境变量
+    unless($cmd =~ /check/) {
+        $clist = &container_list;   # 当前系统docker容器列表
     }
 }
 
-for my $c (keys %$config) {
-    # 容器mount替换变量替换
-    for my $m (keys %{$config->{$c}{mount}}) {
-        my $mcfg = $config->{$c}{mount}{$m};
-        for my $e ( keys %ENV) {
-            $mcfg->{from} =~ s/\$$e/$ENV{$e}/;
-        }
-    }
-
-    # 用户
-    for my $u (keys %{$config->{$c}{users}}) {
-        my $ucfg = $config->{$c}{users}{$u};
-        for my $e ( keys %ENV) {
-            $ucfg->{home}{from} =~ s/\$$e/$ENV{$e}/;
-        }
-        for my $m (keys %{$ucfg->{mount}}) {
-            my $mcfg = $ucfg->{mount}{$m};
-            for my $e ( keys %ENV) {
-                $mcfg->{from} =~ s/\$$e/$ENV{$e}/;
-            }
-        }
-    }
-}
-# dump($config);
-# exit 0;
-my @gen_args;
-if ($ARGV[0] !~ /list|check/) {
-    if(@ARGV < 2) {
+# 非list,check, 则后面必须有参数
+if ($cmd !~ /list|check/) {
+    if(@ARGV < 1) {
         warn "insufficient arguments";
         &usage;
     }
-    $cmd  =  shift @ARGV;   # start/stop/restart
 
-    my $cont_arg;
+    # 非法命令
     if ($cmd !~ /^(run|del|start|stop|restart|up|down|clean|gen)$/) {
         &usage;
     } 
@@ -117,239 +67,29 @@ if ($ARGV[0] !~ /list|check/) {
             }
         }
         @container = @{&ordered_container(@tc)};
+        # warn "ordered[@container]";
     } else {
         @gen_args = @ARGV;
     }
-} else {
-    $cmd = $ARGV[0];
-}
+} 
 
-warn "cmd[$cmd]";
+# warn "cmd[$cmd] gen_args[@gen_args] container[@container]";
 
-my $clist = &container_list;   # 当前系统docker容器列表
-# warn "当前docker容器列表:\n";
 # dump($clist);
 
+# 派发cmd
+&dispatch_cmd;
 
-# 创建并运行容器
-if($cmd =~ /run/) {
-    &check();
-    for my $c (@container) {
-        if ($clist->{"$c.$group"}) {
-            warn "WARNING: container[$c.$group] already exist\n"; 
-        } else {
-            warn "begin run container[$c.$group]...\n";
-            &run($c);
-        }
-    }
-}
 
-# 删除所有容器
-elsif($cmd =~ /del/) {
-    &check();
-    for my $c (@container) {
-        if ($clist->{"$c.$group"}) {
-            if ($clist->{"$c.$group"}) {
-               warn "WARNING: container[$c.$group] still running, I stop it now!!!\n";
-               &stop($c);
-            }
-            warn "begin del container[$c.$group]...\n";
-            &del($c);
-        } else {
-            warn"WARNING: container[$c.$group] doe not exist\n";
-        }
-    }
-}
-
-# 启动已经存在的容器
-elsif ($cmd =~ /start/) {
-    &check();
-    for my $c (@container) {
-        unless($clist->{"$c.$group"}) {
-            warn "ERROR: container[$c.$group] does not exist, I will run it....\n";
-            &run($c);
-        }
-        else {
-            if ($clist->{"$c.$group"} =~ /up/) {
-                warn "WARNING:  container[$c.$group] already running\n";
-            } else {
-                warn "begin start container[$c.$group]...\n";
-                &start($c);
-            }
-        }
-    }
-}
-
-# 停止容器
-elsif ($cmd =~ /stop/) {
-    &check();
-    for my $c (reverse @container) {
-        unless( $clist->{"$c.$group"} ) {
-            warn "WARN: container[$c.$group] does not exist, can not stop it\n";
-        } else {
-            if ($clist->{"$c.$group"} =~ /down/) {
-                warn "WARNING: container[$c.$group] already stopped\n";
-            } else {
-                warn "begin stop container[$c.$group]...\n";
-                &stop($c);
-            }
-        }
-    }
-}
-
-# 重启已经存在的容器
-elsif($cmd =~ /restart/) {
-    &check();
-    for my $c (reverse @container) {
-        unless( $clist->{"$c.$group"} ) {
-            warn "WARN: container[$c.$group] does not exist, can not stop it\n";
-        } else {
-            if ($clist->{"$c.$group"} =~ /down/) {
-                warn "WARNING: container[$c.$group] already stopped\n";
-            } else {
-                warn "begin stop container[$c.$group]...\n";
-                &stop($c);
-            }
-        }
-    }
-    for my $c (@container) {
-        unless( $clist->{"$c.$group"} ) {
-            warn "ERROR: container[$c.$group] does not exist, I will run it...\n";
-            &run($c);
-        } else {
-            if ($clist->{"$c.$group"} =~ /up/) {
-                warn "WARNING: container[$c.$group] already started\n";
-            } else {
-                warn "begin start container[$c.$group]...\n";
-                &start($c);
-            }
-        }
-    }
-}
-
-# 启动容器里的应用: 前提是容器以及启动， 只是其中应用没有启动
-elsif($cmd =~ /up/) {
-    &check();
-    for my $c (reverse @container) {
-        unless( $clist->{"$c.$group"} ) {
-            warn "WARN: container[$c.$group] does not exist, can not up it\n";
-        } else {
-            if ($clist->{"$c.$group"} =~ /down/) {
-                warn "WARNING: container[$c.$group] already stopped, can not up it\n";
-            } else {
-                warn "begin up container[$c.$group]...\n";
-                &up($c);
-            }
-        }
-    }
-    
-}
-
-# 启动容器里的应用: 前提是容器以及启动, 且容器中的应用也已经启动
-elsif($cmd =~/down/) {
-    &check();
-    for my $c (reverse @container) {
-        unless( $clist->{"$c.$group"} ) {
-            warn "WARN: container[$c.$group] does not exist, can not down it\n";
-        } else {
-            if ($clist->{"$c.$group"} =~ /down/) {
-                warn "WARNING: container[$c.$group] already stopped, can not down it\n";
-            } else {
-                warn "begin down container[$c.$group]...\n";
-                &down($c);
-            }
-        }
-    }
-    
-}
-
-# 清理容器中的应用垃圾
-elsif($cmd =~ /clean/) {
-    &check();
-    for my $c (reverse @container) {
-        unless( $clist->{"$c.$group"} ) {
-            warn "WARN: container[$c.$group] does not exist, can not clean it\n";
-        } else {
-            if ($clist->{"$c.$group"} =~ /down/) {
-                warn "WARNING: container[$c.$group] already stopped, can not clean it\n";
-            } else {
-                warn "begin clean container[$c.$group]...\n";
-                &clean($c);
-            }
-        }
-    }
-}
-
-# 检查配置文件
-elsif($cmd =~ /check/) {
-    &check;
-    warn "Congratuation!!! \nconfig file[$config_file] is OK\n";
-}
-
-# 生成容器配置文件
-elsif($cmd =~ /gen/) {
-    for my $g (@gen_args) {
-        my $fh = IO::File->new(">$g");
-        $fh->print(<<'EOF_STR');
-{
-    image => 'itsbase:1.0',              # 用什么image启动
-    order => 1,                          # 启动顺序
-    ip    => '172.17.102.1',             # 容器的IP地址设置
-    port  => { },
-    start => 'service memcached start',  # 需要启动的系统服务
-    stop  => 'service memcached stop',   # 停止时需要停止系统服务
-    clean => undef,
-
-    # 全局级挂载, 挂载只读软件
-    mount => {
-        jdk => {
-            from => '$HOME/opt/jdk1.6.0_43',     # 软件的宿主机位置
-            to   => '/opt/jdk',                  # 挂载到容器的什么位置
-        },
-        activemq => {
-            from => '$HOME/opt/apache-activemq-5.10.0',
-            to   => '/opt/activemq',
-        }
-    },
-
-    # 用户级配置
-    users => {
-
-        # 为容器新建用户: itsapp
-        itsapp => {
-            order => 1,                                       # 用户启动顺序
-            home  => {                                        # 用户HOME目录的挂载
-                from => '$HOME/appstore/tst/its-activemq',    # 宿主机位置
-                to   => '/itsapp',                            # 应用用户在容器中的home路径
-            },
-            start => 'activemq start',  # 启动命令
-            stop  => 'activemq stop',   # 停止命令
-            clean => undef,             # 用户程序的清理命令
-
-            # 用户环境变量配置: 注意顺序!!!
-            env => [
-                [ 'JAVA_HOME',     '/opt/jdk' ],
-                [ 'ACTIVEMQ_HOME', '/opt/activemq' ],
-                [ 'PATH',          '/opt/jdk/bin:$ACTIVEMQ_HOME/bin:$HOME/bin:/sbin:$PATH' ],
-            ],
-        },
-    }
-};
-EOF_STR
-    }
-}
-
-elsif($cmd =~/list/) {
-    dump($clist);
-}
 
 # 启动容器!!!!!!
 sub usage {
     die <<EOF;
 Usage:
-    dockit -c config_file run|start|stop|up|down|restart all|container_list
-                          gen file1 file2 file3
-                          list
+    dockit -c config_file run|start|stop|up|down|restart|clean all|container_list : 容器操作!!
+                          gen file1 file2 file3   : 生成容器配置文件模板
+                          list                    : 查看当前系统中的当前组的容器
+                          check                   : 检查当前配置文件是否正确
     如果存在环境变量DOCKIT_CONFIG的话, 那么-c config_file可以不用
 
 Example 1: 创建并启动所有容器, 以及容器中的应用
@@ -382,6 +122,12 @@ Example 7: 清理容器中的应用垃圾
 
 Example 8: 列出当前系统中的容器以及状态
     dockit -c config_file list
+
+Example 9: 检查配置文件
+    dockit -c config_file check
+
+Example 10: 生成容器配置文件模板
+    dockit gen a.pl b.pl c.pl ...
 
 EOF
 }
@@ -800,10 +546,8 @@ sub container_list {
             # warn "$name => $status";
             my $left = join(" ", splice(@fld, 3));
             # warn "left[$left]";
-            if ($left =~ /^(\d+ (weeks|seconds|minutes|hours|days)|(About)).* ago Up/) {
-                $used{$name} = "up";
-            } else {
-                $used{$name} = "down";
+            if ($left =~ /^(\d+ (weeks|seconds|minutes|hours|days)|(About .*)) ago\s+(Up|Down|Exited)/) {
+                $used{$name} = lc $4;
             }
         }
     }    
@@ -825,6 +569,283 @@ EOF
     system("rm $fname");
 }
 
+# 读取配置文件etc/dockit/its-tst.pl 
+#             etc/dockit/its-tst.d/*
+sub read_config {
+    # warn "ARGV = [@ARGV]";
+    $config_file ||= $ENV{DOCKIT_CONFIG};
+    unless($config_file) {
+        &usage;
+    }
+    unless( -f $config_file) {
+        die "File[$config_file] does not exist";
+    }
+
+    my $main = do $config_file;   # 主配置文件
+    unless($main) {
+        warn "can not parse[$config_file] error[$@]";
+        exit 0;
+    }
+   # dump($main);
+    $group = $main->{group};
+    $gw    = $main->{gateway};
+    my $dir = dirname($config_file);
+    my $glob = "$dir/$main->{container}";
+    my @cont_file = glob($glob);
+    for my $cfile (@cont_file) {
+        unless($cfile =~ /([^\/]+)\.pl/) {
+            die "File[$cfile] file name is invalid";
+        }
+        my $c = $1;
+        $config->{$c} = do $cfile; 
+        unless($config->{$c}) {
+            die "can not parse[$cfile] error[$@]";
+        }
+    }
+}
+
+# 替换环境变量
+sub substitue {
+    for my $c (keys %$config) {
+        # 容器mount替换变量替换
+        for my $m (keys %{$config->{$c}{mount}}) {
+            my $mcfg = $config->{$c}{mount}{$m};
+            for my $e ( keys %ENV) {
+                $mcfg->{from} =~ s/\$$e/$ENV{$e}/;
+            }
+        }
+    
+        # 用户
+        for my $u (keys %{$config->{$c}{users}}) {
+            my $ucfg = $config->{$c}{users}{$u};
+            for my $e ( keys %ENV) {
+                $ucfg->{home}{from} =~ s/\$$e/$ENV{$e}/;
+            }
+            for my $m (keys %{$ucfg->{mount}}) {
+                my $mcfg = $ucfg->{mount}{$m};
+                for my $e ( keys %ENV) {
+                    $mcfg->{from} =~ s/\$$e/$ENV{$e}/;
+                }
+            }
+        }
+    }
+}
+
+# 命令行派发!!
+sub dispatch_cmd {
+    # 创建并运行容器
+    if($cmd =~ /run/) {
+        &check();
+        for my $c (@container) {
+            if ($clist->{"$c.$group"}) {
+                warn "WARNING: container[$c.$group] already exist\n"; 
+            } else {
+                warn "begin run container[$c.$group]...\n";
+                &run($c);
+            }
+        }
+    }
+    
+    # 删除所有容器
+    elsif($cmd =~ /del/) {
+        &check();
+        for my $c (reverse @container) {
+            if ($clist->{"$c.$group"}) {
+                if ($clist->{"$c.$group"} =~ /up/) {
+                   warn "WARNING: container[$c.$group] still running, I stop it now!!!\n";
+                   &stop($c);
+                }
+                warn "begin del container[$c.$group]...\n";
+                &del($c);
+            } else {
+                warn"WARNING: container[$c.$group] doe not exist\n";
+            }
+        }
+    }
+    
+    # 启动已经存在的容器
+    elsif ($cmd =~ /start/) {
+        &check();
+        for my $c (@container) {
+            unless($clist->{"$c.$group"}) {
+                warn "ERROR: container[$c.$group] does not exist, I will run it....\n";
+                &run($c);
+            }
+            else {
+                if ($clist->{"$c.$group"} =~ /up/) {
+                    warn "WARNING:  container[$c.$group] already running\n";
+                } else {
+                    warn "begin start container[$c.$group]...\n";
+                    &start($c);
+                }
+            }
+        }
+    }
+    
+    # 停止容器
+    elsif ($cmd =~ /stop/) {
+        &check();
+        for my $c (reverse @container) {
+            unless( $clist->{"$c.$group"} ) {
+                warn "WARN: container[$c.$group] does not exist, can not stop it\n";
+            } else {
+                if ($clist->{"$c.$group"} =~ /down/) {
+                    warn "WARNING: container[$c.$group] already stopped\n";
+                } else {
+                    warn "begin stop container[$c.$group]...\n";
+                    &stop($c);
+                }
+            }
+        }
+    }
+    
+    # 重启已经存在的容器
+    elsif($cmd =~ /restart/) {
+        &check();
+        for my $c (reverse @container) {
+            unless( $clist->{"$c.$group"} ) {
+                warn "WARN: container[$c.$group] does not exist, can not stop it\n";
+            } else {
+                if ($clist->{"$c.$group"} =~ /down/) {
+                    warn "WARNING: container[$c.$group] already stopped\n";
+                } else {
+                    warn "begin stop container[$c.$group]...\n";
+                    &stop($c);
+                }
+            }
+        }
+        for my $c (@container) {
+            unless( $clist->{"$c.$group"} ) {
+                warn "ERROR: container[$c.$group] does not exist, I will run it...\n";
+                &run($c);
+            } else {
+                if ($clist->{"$c.$group"} =~ /up/) {
+                    warn "WARNING: container[$c.$group] already started\n";
+                } else {
+                    warn "begin start container[$c.$group]...\n";
+                    &start($c);
+                }
+            }
+        }
+    }
+    
+    # 启动容器里的应用: 前提是容器以及启动， 只是其中应用没有启动
+    elsif($cmd =~ /up/) {
+        &check();
+        for my $c (@container) {
+            unless( $clist->{"$c.$group"} ) {
+                warn "WARN: container[$c.$group] does not exist, can not up it\n";
+            } else {
+                if ($clist->{"$c.$group"} =~ /down/) {
+                    warn "WARNING: container[$c.$group] already stopped, can not up it\n";
+                } else {
+                    warn "begin up container[$c.$group]...\n";
+                    &up($c);
+                }
+            }
+        }
+        
+    }
+    
+    # 启动容器里的应用: 前提是容器以及启动, 且容器中的应用也已经启动
+    elsif($cmd =~/down/) {
+        &check();
+        for my $c (reverse @container) {
+            unless( $clist->{"$c.$group"} ) {
+                warn "WARN: container[$c.$group] does not exist, can not down it\n";
+            } else {
+                if ($clist->{"$c.$group"} =~ /down/) {
+                    warn "WARNING: container[$c.$group] already stopped, can not down it\n";
+                } else {
+                    warn "begin down container[$c.$group]...\n";
+                    &down($c);
+                }
+            }
+        }
+        
+    }
+    
+    # 清理容器中的应用垃圾
+    elsif($cmd =~ /clean/) {
+        &check();
+        for my $c (reverse @container) {
+            unless( $clist->{"$c.$group"} ) {
+                warn "WARN: container[$c.$group] does not exist, can not clean it\n";
+            } else {
+                if ($clist->{"$c.$group"} =~ /down/) {
+                    warn "WARNING: container[$c.$group] already stopped, can not clean it\n";
+                } else {
+                    warn "begin clean container[$c.$group]...\n";
+                    &clean($c);
+                }
+            }
+        }
+    }
+    
+    # 检查配置文件
+    elsif($cmd =~ /check/) {
+        &check;
+        warn "Congratuation!!! \nconfig file[$config_file] is OK\n";
+    }
+    
+    # 生成容器配置文件
+    elsif($cmd =~ /gen/) {
+        for my $g (@gen_args) {
+            my $fh = IO::File->new(">$g");
+            $fh->print(<<'EOF_STR');
+    {
+        image => 'itsbase:1.0',              # 用什么image启动
+        order => 1,                          # 启动顺序
+        ip    => '172.17.102.1',             # 容器的IP地址设置
+        port  => { },
+        start => 'service memcached start',  # 需要启动的系统服务
+        stop  => 'service memcached stop',   # 停止时需要停止系统服务
+        clean => undef,
+    
+        # 全局级挂载, 挂载只读软件
+        mount => {
+            jdk => {
+                from => '$HOME/opt/jdk1.6.0_43',     # 软件的宿主机位置
+                to   => '/opt/jdk',                  # 挂载到容器的什么位置
+            },
+            activemq => {
+                from => '$HOME/opt/apache-activemq-5.10.0',
+                to   => '/opt/activemq',
+            }
+        },
+    
+        # 用户级配置
+        users => {
+    
+            # 为容器新建用户: itsapp
+            itsapp => {
+                order => 1,                                       # 用户启动顺序
+                home  => {                                        # 用户HOME目录的挂载
+                    from => '$HOME/appstore/tst/its-activemq',    # 宿主机位置
+                    to   => '/itsapp',                            # 应用用户在容器中的home路径
+                },
+                start => 'activemq start',  # 启动命令
+                stop  => 'activemq stop',   # 停止命令
+                clean => undef,             # 用户程序的清理命令
+    
+                # 用户环境变量配置: 注意顺序!!!
+                env => [
+                    [ 'JAVA_HOME',     '/opt/jdk' ],
+                    [ 'ACTIVEMQ_HOME', '/opt/activemq' ],
+                    [ 'PATH',          '/opt/jdk/bin:$ACTIVEMQ_HOME/bin:$HOME/bin:/sbin:$PATH' ],
+                ],
+            },
+        }
+    };
+EOF_STR
+        }
+    }
+    
+    elsif($cmd =~/list/) {
+        dump($clist);
+    }
+    
+}
 __END__
 
 
