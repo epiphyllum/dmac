@@ -17,7 +17,7 @@ my @gen_args;                         # 如果是gen命令, 后面是文件列�
 my $cmd;                              # start, stop, restart
 my $config;                           # dock.conf配置
 my $config_file;                      # 配置文件路径
-my $clist;
+my $clist;                            # 当前组的容器列表
 
 my $help;
 my $rtn = GetOptions(
@@ -86,11 +86,20 @@ if ($cmd !~ /list|check/) {
 sub usage {
     die <<EOF;
 Usage:
-    dockit -c config_file run|start|stop|up|down|restart|clean all|container_list : 容器操作!!
-                          gen file1 file2 file3   : 生成容器配置文件模板
-                          list                    : 查看当前系统中的当前组的容器
-                          check                   : 检查当前配置文件是否正确
-    如果存在环境变量DOCKIT_CONFIG的话, 那么-c config_file可以不用
+    dockit -c config_file \
+            [
+               run|del|
+               start|stop|restart|
+               up|down|
+               clean     all|container_list 
+            ]                               : 容器操作
+            [  gen file1 file2 file3 ]      : 生成容器配置文件模板
+            list                            : 查看当前系统中的当前组的容器
+            check                           : 检查当前配置文件是否正确
+
+    *******************************************************************
+    ***如果存在环境变量DOCKIT_CONFIG的话, 那么-c config_file可以不用***
+    *******************************************************************
 
 Example 1: 创建并启动所有容器, 以及容器中的应用
     dockit -c config_file run all
