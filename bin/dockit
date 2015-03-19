@@ -8,6 +8,9 @@ use Digest::MD5;
 use Data::Dump qw/dump/;
 use IO::File;
 use File::Basename qw/dirname/;
+use constant {
+    DEBUG => 0,
+};
 
 my ($uid, $gid) = (stat $0)[4, 5];    # warn "$uid, $gid"; exit 0;
 my $gw;                               # 网关
@@ -38,6 +41,7 @@ unless($cmd =~ /gen/) {
     unless($cmd =~ /check/) {
         $clist = &container_list;   # 当前系统docker容器列表
     }
+    # dump($config) if DEBUG;
 }
 
 # 非list,check, 则后面必须有参数
@@ -615,25 +619,57 @@ sub read_config {
 
 # 替换环境变量
 sub substitue {
+
     for my $c (keys %$config) {
         # 容器mount替换变量替换
         for my $m (keys %{$config->{$c}{mount}}) {
             my $mcfg = $config->{$c}{mount}{$m};
             for my $e ( keys %ENV) {
-                $mcfg->{from} =~ s/\$$e/$ENV{$e}/;
+                my $k = quotemeta('$' . $e);
+                if ( $mcfg->{from} =~ /$k/ ) {
+                    my $v = $ENV{$e};
+                    warn "begin substitue[$k][$v][$mcfg->{from}]..." if DEBUG;
+                    $mcfg->{from} =~ s/$k/$v/;
+                 }
             }
         }
     
         # 用户
         for my $u (keys %{$config->{$c}{users}}) {
+
+            # 用户home
             my $ucfg = $config->{$c}{users}{$u};
             for my $e ( keys %ENV) {
-                $ucfg->{home}{from} =~ s/\$$e/$ENV{$e}/;
+                my $k = quotemeta('$' . $e);
+                if ($ucfg->{home}{from} =~ /$k/) {
+                    my $v = $ENV{$e};
+                    warn "begin substitue[$k][$v][$ucfg->{home}{from}]..." if DEBUG;
+                    $ucfg->{home}{from} =~ s/$k/$v/;
+                }
             }
+
+            # 用户mount
             for my $m (keys %{$ucfg->{mount}}) {
                 my $mcfg = $ucfg->{mount}{$m};
                 for my $e ( keys %ENV) {
-                    $mcfg->{from} =~ s/\$$e/$ENV{$e}/;
+                    my $k = quotemeta('$' . $e);
+                    if ($mcfg->{mount}{from} =~ /$k/) {
+                        my $v = $ENV{$e};
+                        warn "begin substitue[$k][$v][$mcfg->{mount}{from}]..." if DEBUG;
+                        $mcfg->{mount}{from} =~ s/$k/$v/;
+                    }
+                }
+            }
+            # 用户package
+            my $pkgs = $ucfg->{packages};
+            for my $p ( keys %$pkgs) {
+                for my $e ( keys %ENV) {
+                    my $k = quotemeta('$' . $e);
+                    if ($pkgs->{$p}{from} =~ /$k/) {
+                        my $v = $ENV{$e};
+                        warn "begin substitue[$k][$v][$pkgs->{$p}{from}]..." if DEBUG;
+                        $pkgs->{$p}{from} =~ s/$k/$v/;
+                    }
                 }
             }
         }
