@@ -793,50 +793,50 @@ sub dispatch_cmd {
         for my $g (@gen_args) {
             my $fh = IO::File->new(">$g");
             $fh->print(<<'EOF_STR');
-    {
-        image => 'itsbase:1.0',              # 用什么image启动
-        order => 1,                          # 启动顺序
-        ip    => '172.17.102.1',             # 容器的IP地址设置
-        port  => { },
-        start => 'service memcached start',  # 需要启动的系统服务
-        stop  => 'service memcached stop',   # 停止时需要停止系统服务
-        clean => undef,
-    
-        # 全局级挂载, 挂载只读软件
-        mount => {
-            jdk => {
-                from => '$HOME/opt/jdk1.6.0_43',     # 软件的宿主机位置
-                to   => '/opt/jdk',                  # 挂载到容器的什么位置
-            },
-            activemq => {
-                from => '$HOME/opt/apache-activemq-5.10.0',
-                to   => '/opt/activemq',
-            }
+{
+    image => 'itsbase:1.0',              # 用什么image启动
+    order => 1,                          # 启动顺序
+    ip    => '172.17.102.1',             # 容器的IP地址设置
+    port  => { },
+    start => 'service memcached start',  # 需要启动的系统服务
+    stop  => 'service memcached stop',   # 停止时需要停止系统服务
+    clean => undef,
+
+    # 全局级挂载, 挂载只读软件
+    mount => {
+        jdk => {
+            from => '$HOME/opt/jdk1.6.0_43',     # 软件的宿主机位置
+            to   => '/opt/jdk',                  # 挂载到容器的什么位置
         },
-    
-        # 用户级配置
-        users => {
-    
-            # 为容器新建用户: itsapp
-            itsapp => {
-                order => 1,                                       # 用户启动顺序
-                home  => {                                        # 用户HOME目录的挂载
-                    from => '$HOME/appstore/tst/its-activemq',    # 宿主机位置
-                    to   => '/itsapp',                            # 应用用户在容器中的home路径
-                },
-                start => 'activemq start',  # 启动命令
-                stop  => 'activemq stop',   # 停止命令
-                clean => undef,             # 用户程序的清理命令
-    
-                # 用户环境变量配置: 注意顺序!!!
-                env => [
-                    [ 'JAVA_HOME',     '/opt/jdk' ],
-                    [ 'ACTIVEMQ_HOME', '/opt/activemq' ],
-                    [ 'PATH',          '/opt/jdk/bin:$ACTIVEMQ_HOME/bin:$HOME/bin:/sbin:$PATH' ],
-                ],
-            },
+        activemq => {
+            from => '$HOME/opt/apache-activemq-5.10.0',
+            to   => '/opt/activemq',
         }
-    };
+    },
+
+    # 用户级配置
+    users => {
+
+        # 为容器新建用户: itsapp
+        itsapp => {
+            order => 1,                                       # 用户启动顺序
+            home  => {                                        # 用户HOME目录的挂载
+                from => '$HOME/appstore/tst/its-activemq',    # 宿主机位置
+                to   => '/itsapp',                            # 应用用户在容器中的home路径
+            },
+            start => 'activemq start',  # 启动命令
+            stop  => 'activemq stop',   # 停止命令
+            clean => undef,             # 用户程序的清理命令
+
+            # 用户环境变量配置: 注意顺序!!!
+            env => [
+                [ 'JAVA_HOME',     '/opt/jdk' ],
+                [ 'ACTIVEMQ_HOME', '/opt/activemq' ],
+                [ 'PATH',          '/opt/jdk/bin:$ACTIVEMQ_HOME/bin:$HOME/bin:/sbin:$PATH' ],
+            ],
+        },
+    }
+};
 EOF_STR
         }
     }
