@@ -247,9 +247,11 @@ sub user_cmd {
     # user_cmd
     my @ucmd;
     for my $u (@users) {
-        my $home = $config->{$c}{users}{$u}{home}{to};
-        push @ucmd, "docker exec $c.$group groupadd -g $gid harydockit >/dev/null 2>&1;";
-        push @ucmd, "docker exec $c.$group useradd -u $uid -g $gid -s /bin/bash -d $home $u >/dev/null 2>&1;";
+        my $home  = $config->{$c}{users}{$u}{home}{to};
+        my $uid_x = $config->{$c}{users}{$u}{uid} || $uid;
+        my $gid_x = $config->{$c}{users}{$u}{gid} || $gid;
+        push @ucmd, "docker exec $c.$group groupadd -g $gid_x harydockit >/dev/null 2>&1;";
+        push @ucmd, "docker exec $c.$group useradd -u $uid_x -g $gid_x -s /bin/bash -d $home $u >/dev/null 2>&1;";
     }
     my $user_cmd = join("\n", @ucmd);
     return $user_cmd;
@@ -520,19 +522,32 @@ RUN_STRING
 
 # 配置文件检查
 sub check {
+
+    # 网关是否存在检查
     my $line = <ifconfig | grep inet addr:$gw>;
     unless($line) {
         die "invalid gateway[$gw]";
     }
+
     for my $c (keys %$config) {
+
+        # 容器的mount检查
         my $mount = $config->{$c}{mount};
         for my $m (values %$mount) {
             unless( -d $m->{from} || -f $m->{from} ) {
                 die "File or Directory[$m->{from}] does not exist";
             }
         }
+
+        # 用户检查
         my $users = $config->{$c}{users};
+        my %uid_used;
         for my $u (keys %$users) {
+            unless($users->{$u}{uid}) {
+                $uid_used{$u} = 1;
+            } 
+
+            # 用户home的检查
             my $h = $users->{$u}{home};
             unless( -d $h->{from}) {
                 die "Directory[$h->{from}] does not exist";
@@ -543,6 +558,12 @@ sub check {
                     die "File or Directory[$m->{from}] does not exist";
                 }
             }
+        }
+
+        # 在配置多个用户时, 默认的UID不能被用多次， 不然docker exec useradd时创建不了用户
+        my @uname = keys %uid_used;
+        if (@uname > 1) {
+             die "ERROR: default uid[$uid] used by[@uname] times!!!!"
         }
     }
     return 1;
@@ -843,7 +864,7 @@ sub dispatch_cmd {
     image => 'itsbase:1.0',              # 用什么image启动
     order => 1,                          # 启动顺序
     ip    => '172.17.102.1',             # 容器的IP地址设置
-    port  => { },
+    port  => { },                        # 容器对外映射的端口
     start => 'service memcached start',  # 需要启动的系统服务
     stop  => 'service memcached stop',   # 停止时需要停止系统服务
     clean => undef,
@@ -866,6 +887,8 @@ sub dispatch_cmd {
         # 为容器新建用户: itsapp
         itsapp => {
             order => 1,                                       # 用户启动顺序
+            uid   => undef,                                   # 默认为运行用户的uid, 如果多个用户需要注意!!!!!!!!!
+            gid   => undef,                                   # 默认为运行用户的gid,
             home  => {                                        # 用户HOME目录的挂载
                 from => '$HOME/appstore/tst/its-activemq',    # 宿主机位置
                 to   => '/itsapp',                            # 应用用户在容器中的home路径
@@ -893,5 +916,54 @@ EOF_STR
     
 }
 __END__
+=======================================================
+=              容器配置模板(container-name.pl)
+=======================================================
+{
+    image => 'itsbase:1.0',              # 用什么image启动
+    order => 1,                          # 启动顺序
+    ip    => '172.17.102.1',             # 容器的IP地址设置
+    port  => { },                        # 容器对外映射的端口
+    start => 'service memcached start',  # 需要启动的系统服务
+    stop  => 'service memcached stop',   # 停止时需要停止系统服务
+    clean => undef,
+
+    # 全局级挂载, 挂载只读软件
+    mount => {
+        jdk => {
+            from => '$HOME/opt/jdk1.6.0_43',     # 软件的宿主机位置
+            to   => '/opt/jdk',                  # 挂载到容器的什么位置
+        },
+        activemq => {
+            from => '$HOME/opt/apache-activemq-5.10.0',
+            to   => '/opt/activemq',
+        }
+    },
+
+    # 用户级配置
+    users => {
+
+        # 为容器新建用户: itsapp
+        itsapp => {
+            order => 1,                                       # 用户启动顺序
+            uid   => undef,                                   # 默认为运行用户的uid, 如果多个用户需要注意!!!!!!!!!
+            gid   => undef,                                   # 默认为运行用户的gid,
+            home  => {                                        # 用户HOME目录的挂载
+                from => '$HOME/appstore/tst/its-activemq',    # 宿主机位置
+                to   => '/itsapp',                            # 应用用户在容器中的home路径
+            },
+            start => 'activemq start',  # 启动命令
+            stop  => 'activemq stop',   # 停止命令
+            clean => undef,             # 用户程序的清理命令
+
+            # 用户环境变量配置: 注意顺序!!!
+            env => [
+                [ 'JAVA_HOME',     '/opt/jdk' ],
+                [ 'ACTIVEMQ_HOME', '/opt/activemq' ],
+                [ 'PATH',          '/opt/jdk/bin:$ACTIVEMQ_HOME/bin:$HOME/bin:/sbin:$PATH' ],
+            ],
+        },
+    }
+};
 
 
