@@ -41,7 +41,7 @@ unless($cmd =~ /gen/) {
     unless($cmd =~ /check/) {
         $clist = &container_list;   # 当前系统docker容器列表
     }
-    # dump($config) if DEBUG;
+    dump($config) if DEBUG;
 }
 
 # 非list,check, 则后面必须有参数
@@ -195,8 +195,10 @@ sub run {
     # ip_cmd
     my $ip    = $config->{$c}{ip};
     my @ip_cmd;
+    my $idx = 1;
     for my $i (@$ip) {
-        push @ip_cmd, "pipework docker0 $c.$group $i/24\@$gw;";
+        push @ip_cmd, "pipework docker0  -i enc$idx $c.$group $i/24\@$gw;";
+        $idx++;
     }
     $ip_cmd = join("\n", @ip_cmd);
 
@@ -221,7 +223,7 @@ $ip_cmd
 $sys_cmd 
 $start_cmd
 RUN_STRING
-    # warn "begin run[\n$cmd]";
+    warn "begin run[\n$cmd]" if DEBUG;
     root($cmd);
 }
 
@@ -349,6 +351,7 @@ sub install_packages {
     for my $pkg (keys %$pkgs) {
         my $from = $pkgs->{$pkg}{from};
         my $to   = "$home/$pkgs->{$pkg}{to}";
+        warn "check package $pkg:[$from, $to]..." if DEBUG;
 
         # 软件中心不存在这个war
         unless( -f $from) {
@@ -360,7 +363,6 @@ sub install_packages {
             warn "install package[$from, $to]...";
             copy($from, $to);
             # system("chown $uid:$gid $to");
-            return;
         } 
         # 容器中存在, 则依据md5是否需要更新!!
         else {
