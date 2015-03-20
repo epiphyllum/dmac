@@ -194,7 +194,11 @@ sub run {
     ###############
     # ip_cmd
     my $ip    = $config->{$c}{ip};
-    $ip_cmd = "pipework docker0 $c.$group $ip/24\@$gw;";
+    my @ip_cmd;
+    for my $i (@$ip) {
+        push @ip_cmd, "pipework docker0 $c.$group $i/24\@$gw;";
+    }
+    $ip_cmd = join("\n", @ip_cmd);
 
     ###############
     # user_cmd
