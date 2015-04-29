@@ -1,19 +1,37 @@
 #!/usr/bin/perl
 use strict;
 use warnings;
-use Env qw/HOME/;
+use Env qw/HOME USER/;
 use Getopt::Long;
 use File::Copy;
 use Digest::MD5;
 use Data::Dump qw/dump/;
 use IO::File;
 use File::Basename qw/dirname/;
+use POSIX qw/getuid getgid/;
 use constant {
     DEBUG => 0,
 };
 
-my ($uid, $gid) = (stat $0)[4, 5];    # warn "$uid, $gid"; exit 0;
+my $uid = getuid;
+my $gid = getgid;
+
+my $pipework = "$HOME/.dockerdata/bin/pipework";
+my $bridge   = "br-$USER";
 my $gw;                               # 网关
+
+
+# 检验网桥, 并获取网桥地址
+my $addr_line = `/sbin/ifconfig $bridge | grep 'inet addr' 2>&1`;
+unless($addr_line) {
+    die "bridge br-$USER is not exists";
+}
+if ($addr_line =~ /:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})/) {
+    $gw = $1;
+} else {
+    die "can not get address of br-$USER";
+}
+
 my $group;                            # app组
 my @container;                        # 相关的容器
 my @gen_args;                         # 如果是gen命令, 后面是文件列表
@@ -52,7 +70,7 @@ if ($cmd !~ /list|check/) {
     }
 
     # 非法命令
-    if ($cmd !~ /^(run|del|start|stop|restart|up|down|clean|gen)$/) {
+    if ($cmd !~ /^(run|del|start|stop|restart|up|down|clean|enter|gen)$/) {
         &usage;
     } 
 
@@ -156,6 +174,11 @@ sub ordered_container {
 # 计算文件md5
 sub md5 {
     my $filename = shift;
+
+    # 目录, 无法计算md5
+    if ( -d $filename ) {
+       return `uuidgen`;
+    }
     open (my $fh, '<', $filename) or die "Can't open '$filename': $!";
     binmode ($fh);
     Digest::MD5->new->addfile($fh)->hexdigest
@@ -197,7 +220,7 @@ sub run {
     my @ip_cmd;
     my $idx = 1;
     for my $i (@$ip) {
-        push @ip_cmd, "pipework docker0  -i enc$idx $c.$group $i/24\@$gw;";
+        push @ip_cmd, "$pipework $bridge  -i enc$idx $c.$group $i/24\@$gw;";
         $idx++;
     }
     $ip_cmd = join("\n", @ip_cmd);
@@ -215,16 +238,22 @@ sub run {
     # start_cmd
     $start_cmd = &user_start_cmd($c);
 
-    # 启动容器!!!!!
-    my $cmd = <<"RUN_STRING";
-$run_cmd
-$user_cmd 
-$ip_cmd
-$sys_cmd 
+    # 1.1 启动容器,
+    system($run_cmd);
+
+    # 1.2 创建应用用户
+    system($user_cmd);
+
+    # 1.3 设置IP地址, 可设置多IP
+    # root($ip_cmd);
+    root($ip_cmd);
+
+    # 1.4 启动系统与应用服务
+    system(<<EOF);
+$sys_cmd
 $start_cmd
-RUN_STRING
-    warn "begin run[\n$cmd]" if DEBUG;
-    root($cmd);
+EOF
+
 }
 
 #
@@ -236,7 +265,7 @@ sub user_start_cmd {
 
     my @scmd;
     for my $u (@users) {
-        my $start = $config->{$c}{users}{$u}{start};
+        my $start = $config->{$c}{users}{$u}{start} || "echo >/dev/null";
         push @scmd, "docker exec $c.$group su -l $u -c '$start';";
     }
     my $start_cmd = join("\n", @scmd);
@@ -306,8 +335,8 @@ sub global_docker {
 #
 sub install_user {
     my ($c, $u) = @_;
-    &install_profile($c, $u);  # 安装用户profile
-    &install_packages($c, $u);              # 安装用户package;
+    &install_profile($c, $u);      # 安装用户profile
+    &install_packages($c, $u);     # 安装用户package;
 }
 
 # 安装某个用户的profile
@@ -351,17 +380,17 @@ sub install_packages {
     for my $pkg (keys %$pkgs) {
         my $from = $pkgs->{$pkg}{from};
         my $to   = "$home/$pkgs->{$pkg}{to}";
-        warn "check package $pkg:[$from, $to]..." if DEBUG;
+        warn "check files $pkg:[$from, $to]..." if DEBUG;
 
         # 软件中心不存在这个war
-        unless( -f $from) {
+        unless( -f $from || -d $from) {
             die "应用[$pkg]$from不存在";
         }
 
         # 容器中不存在war, 开始install
-        unless( -f $to) {
-            warn "install package[$from, $to]...";
-            copy($from, $to);
+        unless( -f $to || -d $to ) {
+            warn "install files[$from, $to]...\n";
+            system("cp -r $from $to");
             # system("chown $uid:$gid $to");
         } 
         # 容器中存在, 则依据md5是否需要更新!!
@@ -369,8 +398,9 @@ sub install_packages {
             my $md5_from = &md5($from);
             my $md5_to   = &md5($to);
             unless($md5_from eq $md5_to) {
-                warn "install package[$from, $to]...";
-                copy($from, $to);
+                warn "install files[$from, $to]...\n";
+                # copy($from, $to);
+                system("cp -r $from $to");
                 # system("chown $uid:$gid $to");
             }
         }
@@ -418,10 +448,7 @@ sub ordered_user {
 sub del {
     my $c = shift;
     my $cfg = $config->{$c};
-    my $cmd =<<RUN_STRING;
-docker rm $c.$group
-RUN_STRING
-    root($cmd);
+    system("docker rm $c.$group");
 }
 
 
@@ -434,22 +461,22 @@ RUN_STRING
 sub stop {
     my $c = shift;
     my $cfg = $config->{$c};
-    my $stop = $config->{$c}{stop};
+    my $stop = $config->{$c}{stop} || "echo >/dev/null";
 
     my @ustop;
     my @users = reverse &ordered_user($c);
     for my $u (@users) {
-        push @ustop, "docker exec $c.$group su -l $u -c '$cfg->{users}{$u}{stop}'";
+        my $stop = $cfg->{users}{$u}{stop} || "echo >/dev/null";
+        push @ustop, "docker exec $c.$group su -l $u -c '$stop'";
     }
     my $ustop = join("\n", @ustop);
-    
-    my $cmd =<<RUN_STRING;
-$ustop
-docker exec $c.$group $stop
+
+    system(<<EOF);    
+docker exec $c.$group $stop;
 docker stop $c.$group;
-RUN_STRING
-    # warn "stop[$cmd]";
-    root($cmd);
+EOF
+    
+
 }
 
 #
@@ -458,42 +485,60 @@ RUN_STRING
 sub start {
     my $c = shift;
     my $cfg = $config->{$c};
-    my $start = $cfg->{start} || "echo >/dev/null";
+    my $sys_start = $cfg->{start} || "echo >/dev/null";
     my $ip    = $cfg->{ip};
+    my @users = keys %{$cfg->{users}};
+
+    # 检测安装package
+    for my $u (@users) {
+        &install_user($c, $u);
+    }
+ 
 
     my $start_cmd = &user_start_cmd($c);
 
-    my $cmd =<<RUN_STRING;
-docker start $c.$group;
-pipework docker0 $c.$group $ip/24\@$gw;
-docker exec $c.$group $start;
-$start_cmd
-RUN_STRING
-    # warn "begin cmd[$cmd]";
-    root($cmd);
+    # 启动容器
+    system("docker start $c.$group");
+
+    # 设置IP
+    my @ip_cmd;
+    for my $it(@$ip) {
+        push @ip_cmd, "$pipework $bridge $c.$group $it/24\@$gw";
+    }
+    my $ip_cmd = join("\n", @ip_cmd);
+    root($ip_cmd);
+    
+    # 启动系统服务
+    my $sys_cmd = "docker exec $c.$group $sys_start;";
+    system($sys_cmd);
+
+    # 启动用户程序
+    system( $start_cmd);
 }
 
 sub up {
     my $c = shift;
     my $cfg = $config->{$c};
     my $start = $cfg->{start} || "echo >/dev/null";
+
     my $start_cmd = &user_start_cmd($c);
     my $cmd =<<RUN_STRING;
 docker exec $c.$group $start;
 $start_cmd
 RUN_STRING
-    root($cmd);
+    system($cmd);
 }
 
 sub down {
     my $c = shift;
     my $cfg = $config->{$c};
-    my $stop = $config->{$c}{stop};
+    my $stop = $config->{$c}{stop} || "echo >/dev/null";
 
     my @ustop;
     my @users = reverse &ordered_user($c);
     for my $u (@users) {
-        push @ustop, "docker exec $c.$group su -l $u -c '$cfg->{users}{$u}{stop}'";
+        my $stop =  $cfg->{users}{$u}{stop} || "echo >/dev/null";
+        push @ustop, "docker exec $c.$group su -l $u -c '$stop'";
     }
     my $ustop = join("\n", @ustop);
     
@@ -502,7 +547,7 @@ $ustop
 docker exec $c.$group $stop
 RUN_STRING
     # warn "stop[$cmd]";
-    root($cmd);
+    system($cmd);
 }
 
 sub clean {
@@ -523,17 +568,11 @@ $uclean
 docker exec $c.$group $clean
 RUN_STRING
     # warn "clean[$cmd]";
-    root($cmd);
+    system($cmd);
 }
 
 # 配置文件检查
 sub check {
-
-    # 网关是否存在检查
-    my $line = <ifconfig | grep inet addr:$gw>;
-    unless($line) {
-        die "invalid gateway[$gw]";
-    }
 
     for my $c (keys %$config) {
 
@@ -577,7 +616,7 @@ sub check {
 
 # 获取当前group中的docker容器的状态!!!
 sub container_list {
-    open FH, 'sudo docker ps -a |';
+    open FH, 'docker ps -a |';
     <FH>;
     my %used;
     while(<FH>) {
@@ -597,17 +636,7 @@ sub container_list {
 
 sub root {
     my $cmd = shift;
-    system("rm -fr /tmp/.dock-*.sh"); 
-    my $fname = "/tmp/.dock-$$.sh";
-    my $fh = IO::File->new(">/tmp/.dock-$$.sh");
-    $fh->print(<<EOF);    
-#!/bin/bash
-$cmd
-EOF
-    $fh->close();
-    system("chmod +x $fname");
-    system("sudo $fname");
-    system("rm $fname");
+    system("ssh root \'$cmd\'");
 }
 
 # 读取配置文件etc/dockit/its-tst.pl 
@@ -628,8 +657,8 @@ sub read_config {
         exit 0;
     }
    # dump($main);
-    $group = $main->{group};
-    $gw    = $main->{gateway};
+    $group  = $main->{group};
+    $gw     = $main->{gateway};
     my $dir = dirname($config_file);
     my $glob = "$dir/$main->{container}";
     my @cont_file = glob($glob);
@@ -918,6 +947,16 @@ EOF_STR
     
     elsif($cmd =~/list/) {
         dump($clist);
+    }
+   
+    elsif( $cmd =~ /enter/) {
+        my $c = shift @container;
+        my $enter_cmd = "docker exec -it $c.$group bash";
+        system($enter_cmd);
+        # my $errmsg = `$enter_cmd`;
+        # if ( $? << 8 != 0 ) { 
+        #     warn "can not enter[$c] errmsg[$errmsg]";
+        # }
     }
     
 }
