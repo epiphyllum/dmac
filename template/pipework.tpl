@@ -1,7 +1,7 @@
 #!/bin/sh
 set -e
 
-DOCKER_EXE=/home/{{USER}}/bin/docker
+DOCKER_EXE=/home/{{user}}/.dockerdata/bin/docker
 
 case "$1" in
     --wait)

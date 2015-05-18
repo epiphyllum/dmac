@@ -16,6 +16,6 @@ install:
 	@echo 'export PATH=${HOME}/.dockerdata/bin:$$PATH' >> ${HOME}/.profile
 	@echo ". ${HOME}/.dockerdata/etc/profile" >> ${HOME}/.profile
 	@banner done
-	@echo "to config dockerd, please edit ${HOME}/etc/dockerd.conf";
-	@echo "to start dockerd,  please start ${HOME}/bin/dockerd with root!!!"
+	@echo "to config dockerd, please edit ${HOME}/.dockerdata/etc/dockerd.conf";
+	@echo "to start dockerd,  please start ${HOME}/.dockerdata/bin/dockerd with root!!!"
 
