@@ -46,7 +46,7 @@ unset ip
 br=br-${USER}
 
 # 网关地址
-gateway=$(ip a list br-tst  | grep 'inet ' | awk '{print $2; }' | awk -F'/' '{print $1; }');
+gateway=$(ip a list br-${USER}  | grep 'inet ' | awk '{print $2; }' | awk -F'/' '{print $1; }');
 
 
 # root来设置ip地址时用的pipework

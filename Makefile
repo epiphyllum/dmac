@@ -1,11 +1,4 @@
-all: prepare
-
-prepare:
-	@echo prepare for ${USER}...
-	sed "s/{{user}}/${USER}/g" template/dockerd.tpl  > bin/dockerd
-	sed "s/{{user}}/${USER}/g" template/pipework.tpl > bin/pipework
-
-install: prepare
+install:
 	@echo "install..."
 	mkdir -p ${HOME}/etc/dsvc.d/
 	mkdir -p ${HOME}/.dockerdata/data
@@ -13,11 +6,16 @@ install: prepare
 	mkdir -p ${HOME}/.dockerdata/log
 	mkdir -p ${HOME}/.dockerdata/bin
 	mkdir -p ${HOME}/.dockerdata/etc
-	cp bin/docker       ${HOME}/.dockerdata/bin/doker
-	cp bin/dockerd      ${HOME}/.dockerdata/bin/dokerd
-	cp bin/dockit       ${HOME}/.dockerdata/bin/dockit
-	cp bin/pipework     ${HOME}/.dockerdata/bin/pipework
-	cp bin/dsvc         ${HOME}/.dockerdata/bin/dsvc
+	cp template/docker.tpl     ${HOME}/.dockerdata/bin/docker.tpl
+	cp template/dockerd.tpl    ${HOME}/.dockerdata/bin/dockerd.tpl
+	cp template/pipework.tpl   ${HOME}/.dockerdata/bin/pipework.tpl
+	sed "s/{{user}}/${USER}/g" ${HOME}/.dockerdata/bin/docker
+	sed "s/{{user}}/${USER}/g" ${HOME}/.dockerdata/bin/dockerd
+	sed "s/{{user}}/${USER}/g" ${HOME}/.dockerdata/bin/pipework
+	sed "s/{{home}}/${HOME}/g" ${HOME}/.dockerdata/bin/docker 
+	sed "s/{{home}}/${HOME}/g" ${HOME}/.dockerdata/bin/dockerd
+	sed "s/{{home}}/${HOME}/g" ${HOME}/.dockerdata/bin/pipework
+	chmod +x ${HOME}/.dockerdata/bin/*
 	cp etc/dockerd.conf ${HOME}/.dockerdata/etc/dockerd.conf
 	cp etc/profile      ${HOME}/.dockerdata/etc/profile
 	cp -r etc/dsvc.d/*     ${HOME}/etc/dsvc.d/

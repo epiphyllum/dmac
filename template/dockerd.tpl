@@ -7,7 +7,7 @@
 # user     : 用户
 # listen   : xx.xx.xx.xx:8080
 #
-. /home/{{user}}/.dockerdata/etc/dockerd.conf
+. {{home}}/.dockerdata/etc/dockerd.conf
 
 
 # 设置网桥
@@ -15,7 +15,7 @@ setup_bridge() {
     brctl addbr br-{{user}};
     ip address add $ip/$mask dev br-{{user}}
     ip link set dev br-{{user}} up
-    su {{user}} -c "mkdir -p /home/{{user}}/.dockerdata/{docker,run,log}"
+    su {{user}} -c "mkdir -p {{home}}/.dockerdata/{docker,run,log}"
 }
 
 # 清除网桥
@@ -28,16 +28,16 @@ teardown_bridge() {
 # 运行服务
 start_daemon() {
     /usr/bin/docker -d \
-       -g /home/{{user}}/.dockerdata/data \
+       -g {{home}}/.dockerdata/data \
        -b br-{{user}} \
-       -p /home/{{user}}/.dockerdata/run/docker.pid \
+       -p {{home}}/.dockerdata/run/docker.pid \
        -H tcp://$listen \
-       -H unix:///home/{{user}}/.dockerdata/run/docker.sock > /home/{{user}}/.dockerdata/log/docker.log 2>&1 &
+       -H unix://{{home}}/.dockerdata/run/docker.sock > {{home}}/.dockerdata/log/docker.log 2>&1 &
 }
 
 # 
 stop_daemon() {
-    kill `cat /home/{{user}}/.dockerdata/run/docker.pid`;
+    kill `cat {{home}}/.dockerdata/run/docker.pid`;
 }
 
 case $1 in

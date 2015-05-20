@@ -1,1 +1,1 @@
-exec /usr/bin/docker -H unix://$HOME/.dockerdata/run/docker.sock "$@"
+exec /usr/bin/docker -H unix:///.dockerdata/run/docker.sock "$@"
