@@ -1,2 +1,2 @@
--v /home/hary/appstore/tfs/gitlab/data:/home/git/data
--v /home/hary/appstore/tfs/gitlab/log:/var/log/gitlab
+-v /tmp:/test
+-p 10.10.10.10:22222:22
