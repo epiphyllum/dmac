@@ -6,15 +6,16 @@ install:
 	mkdir -p ${HOME}/.dockerdata/log
 	mkdir -p ${HOME}/.dockerdata/bin
 	mkdir -p ${HOME}/.dockerdata/etc
-	cp template/docker.tpl     ${HOME}/.dockerdata/bin/docker.tpl
-	cp template/dockerd.tpl    ${HOME}/.dockerdata/bin/dockerd.tpl
-	cp template/pipework.tpl   ${HOME}/.dockerdata/bin/pipework.tpl
-	sed "s/{{user}}/${USER}/g" ${HOME}/.dockerdata/bin/docker
-	sed "s/{{user}}/${USER}/g" ${HOME}/.dockerdata/bin/dockerd
-	sed "s/{{user}}/${USER}/g" ${HOME}/.dockerdata/bin/pipework
-	sed "s/{{home}}/${HOME}/g" ${HOME}/.dockerdata/bin/docker 
-	sed "s/{{home}}/${HOME}/g" ${HOME}/.dockerdata/bin/dockerd
-	sed "s/{{home}}/${HOME}/g" ${HOME}/.dockerdata/bin/pipework
+	cp bin/dsvc ${HOME}/.dockerdata/bin/
+	cp template/docker.tpl     ${HOME}/.dockerdata/bin/docker
+	cp template/dockerd.tpl    ${HOME}/.dockerdata/bin/dockerd
+	cp template/pipework.tpl   ${HOME}/.dockerdata/bin/pipework
+	sed "s|{{user}}|${USER}|g" -i ${HOME}/.dockerdata/bin/docker
+	sed "s|{{user}}|${USER}|g" -i ${HOME}/.dockerdata/bin/dockerd
+	sed "s|{{user}}|${USER}|g" -i ${HOME}/.dockerdata/bin/pipework
+	sed "s|{{home}}|${HOME}|g" -i ${HOME}/.dockerdata/bin/docker 
+	sed "s|{{home}}|${HOME}|g" -i ${HOME}/.dockerdata/bin/dockerd
+	sed "s|{{home}}|${HOME}|g" -i ${HOME}/.dockerdata/bin/pipework
 	chmod +x ${HOME}/.dockerdata/bin/*
 	cp etc/dockerd.conf ${HOME}/.dockerdata/etc/dockerd.conf
 	cp etc/profile      ${HOME}/.dockerdata/etc/profile

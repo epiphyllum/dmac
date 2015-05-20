@@ -1,1 +1,0 @@
-exec /usr/bin/docker -H unix:///.dockerdata/run/docker.sock "$@"
