@@ -20,7 +20,7 @@ install: prepare
 	cp bin/dsvc         ${HOME}/.dockerdata/bin/dsvc
 	cp etc/dockerd.conf ${HOME}/.dockerdata/etc/dockerd.conf
 	cp etc/profile      ${HOME}/.dockerdata/etc/profile
-	cp etc/dsvc.d/*     ${HOME}/etc/dsvc.d/
+	cp -r etc/dsvc.d/*     ${HOME}/etc/dsvc.d/
 	chmod +x ${HOME}/.dockerdata/bin/*
 	@echo "###############################################"  >> ${HOME}/.bash_profile
 	@echo "# please do not edit those lines below"     >> ${HOME}/.bash_profile 

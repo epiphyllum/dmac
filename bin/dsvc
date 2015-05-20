@@ -127,7 +127,7 @@ function run {
     # 3. ssh进入容器配置
     echo "3. ssh into container[$name]  and config it..." | color green bold;
     if [ -f $HOME/etc/dsvc.d/$name/$name.config ]; then
-        cmd="scp $HOME/etc/dsvc.d/$name.config root@$ip:/dsvc-config.sh";
+        cmd="scp $HOME/etc/dsvc.d/$name/$name.config root@$ip:/dsvc-config.sh";
         # echo "cmd=[$cmd]";
         msg=$($cmd);
         cmd="ssh root@$ip bash /dsvc-config.sh"
