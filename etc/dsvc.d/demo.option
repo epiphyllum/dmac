@@ -1,0 +1,2 @@
+-v /home/hary/appstore/tfs/gitlab/data:/home/git/data
+-v /home/hary/appstore/tfs/gitlab/log:/var/log/gitlab

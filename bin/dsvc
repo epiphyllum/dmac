@@ -1,0 +1,210 @@
+#!/bin/bash
+################################################################
+#  我的Dockerfile规范:
+#     1. CMD为 sshd -D 
+#     2. 服务放在/start里启动
+#     3. 容器中安装管理公钥
+#
+#  容器启动步骤:
+#     1. 创建容器时, --net=none
+#     2. pipework设置IP地址
+#     3. ssh到容器, 设置/etc/hosts
+#     4. 启动服务:  docker exec -d container /start 
+################################################################
+# 颜色加字体输出
+function color()
+{
+    case "$1" in
+        red)    nn="31";;
+        green)  nn="32";;
+        yellow) nn="33";;
+        blue)   nn="34";;
+        purple) nn="35";;
+        cyan)   nn="36";;
+    esac
+    ff=""
+    case "$2" in
+        bold)   ff=";1";;
+        bright) ff=";2";;
+        uscore) ff=";4";;
+        blink)  ff=";5";;
+        invert) ff=";7";;
+    esac
+    color_begin=`echo -e -n "\033[${nn}${ff}m"`
+    color_end=`echo -e -n "\033[0m"`
+    while read line; do
+        echo "${color_begin}${line}${color_end}"  
+    done
+}
+
+# 读取网关地址
+source $HOME/.dockerdata/etc/dockerd.conf
+gateway=$ip
+unset ip
+
+# bridge名称 
+br=br-${USER}
+
+# root来设置ip地址时用的pipework
+pipwork=$HOME/.dockerdata/bin/pipework
+
+if [ ! $# = 2 ]; then
+    echo "Usage:  dsvc svc_name run|start|stop|rm|clean" | color red bold;
+    exit 0;
+fi
+
+name=$1;
+action=$2;
+
+#
+# 读取配置文件
+#
+if [ ! -f $HOME/etc/dsvc.d/$name ]; then
+    echo "File[$HOME/etc/dsvc.d/$name] does not exist" | color red bold;
+    exit 0;
+fi
+source $HOME/etc/dsvc.d/$name
+
+# 检查服务配置 - image
+if [ ! $image ]; then
+    echo "invalid config - image" | color red bold;
+    exit 0;
+fi
+if [ ! "$start" ]; then
+    echo "invalid config - start" | color red bold;
+    exit 0;
+fi
+if [ ! $ip ]; then
+    echo "invalid config - ip" | color red bold;
+    exit 0;
+fi
+if [ ! $mask ]; then
+    echo "invalid config - mask" | color red bold;
+    exit 0;
+fi
+
+function run {
+    # 创建并启动容器
+    echo "1. create and start a container..." | color green bold;
+    if [ -f $HOME/etc/dsvc.d/$name.option ]; then
+        option=$(cat $HOME/etc/dsvc.d/$name.option| perl -pe 's/\n/ /g');
+    fi
+    # msg=$(docker run -it -d --name $name --hostname $name --net=none "$option" $image:$version 2>&1); errno=$?;
+    cmd="docker run -it -d --name $name --hostname $name --net=none $option $image:$version 2>&1";
+    echo "cmd[$cmd]";
+    msg=$($cmd); 
+    errno=$?;
+    if  [  $errno -ne 0 ] ; then 
+        echo "failed msg[$msg]" | color red bold;
+        exit 0;
+    fi
+
+    # 设置IP地址
+    echo  "2. set ip address for container[$name]..." | color green bold;
+    msg=$(ssh root $pipework br-${USER}  -i eth0 $name $ip/$mask@$gateway 2>&1); errno=$?;
+    if  [  $errno -ne 0 ] ; then 
+        echo "failed msg[$msg]" | color red bold;
+        exit 0;
+    fi
+
+    # ssh to known hosts
+    ssh root@${ip} "echo >/dev/null"; 
+
+    # ssh-config
+    echo "3. ssh to container[$name]  and config it..." | color green bold;
+    # cmd="ssh root@${ip} '$config' 2>&1";
+    # echo "cmd[$cmd]"
+    # msg=$($cmd);  errno=$?;
+    msg=$(ssh root@${ip} $config 2>&1); errno=$?;
+    if  [  $errno -ne 0 ] ; then 
+        echo "failed msg[$msg]" | color red bold;
+        exit 0;
+    fi
+
+    # 启动容器内服务
+    echo "4. start service..." | color green bold;  exit 0;
+    msg=$(docker exec -d $name $start); errno=$?;
+    if  [  $errno -ne 0 ] ; then 
+        echo "failed msg[$msg]" | color red bold;
+        exit 0;
+    fi
+}
+
+function start {
+    # 1. 启动容器, 此时无网络
+    echo "1. start  container[$name]..." | color green bold;
+    msg=$(docker start $name 2>&1); errno=$?
+    if  [  $errno -ne 0 ] ; then 
+        echo "failed msg[$msg]" | color red bold;
+        exit 0;
+    fi
+
+    # 2. 设置容器IP
+    echo "2. set ip address for container[$name]..." | color green bold;
+    msg=$(ssh root $pipework $br  -i eth0 $name $ip/$mask@$gateway 2>&1); errno=$?;
+    if  [  $errno -ne 0 ] ; then 
+        echo "failed msg[$msg]" | color red bold;
+        exit 0;
+    fi
+
+    # 3. 用ssh进入容器配置: 主要是/hosts!!
+    echo "3. ssh to container[$name]  and config it..." | color green bold;
+    msg=$(ssh root@${ip} $config 2>&1); errno=$?;
+    # cmd="ssh root@${ip} '$config' 2>&1";
+    # echo "cmd[$cmd]"
+    # msg=$($cmd);  errno=$?;
+    if  [  $errno -ne 0 ] ; then 
+        echo "failed msg[$msg]" | color red bold;
+        exit 0;
+    fi
+
+    # 4. 在容器内exec服务
+    echo "4. start the service in container[$name]..." | color green bold;
+    msg=$(docker exec -d $name $start 2>&1); errno=$?
+    if  [  $errno -ne 0 ] ; then 
+        echo "failed msg[$msg]" | color red bold;
+        exit 0;
+    fi
+}
+
+function enter {
+    docker exec -it $name bash;
+}
+
+function stop {
+    docker stop $name;
+}
+
+function rm {
+    docker rm $name;
+}
+
+function clean {
+    $clean;
+}
+
+case $action in
+   # create container and initialize it and running
+   run) run
+   ;;
+
+   # docker start
+   start) start
+   ;;
+
+   # docker stop_docker
+   stop) stop
+   ;;
+
+   # docker stop_docker
+   rm) rm
+   ;;
+
+   # docker stop_docker
+   enter) enter
+   ;;
+
+   clean) clean
+   ;;
+esac
+

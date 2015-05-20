@@ -1,0 +1,7 @@
+image=hary/centos-hello
+version=
+start=/start
+
+ip=10.100.10.100
+mask=24
+gateway=10.100.0.1

@@ -1,4 +1,8 @@
-all: install
+all: prepare
+
+prepare:
+	@sed "s/{{user}}/${USER}/g" template/dockerd.tpl  > bin/dockerd
+	@sed "s/{{user}}/${USER}/g" template/pipework.tpl > bin/pipework
 
 install:
 	@mkdir -p ${HOME}/.dockerdata/data
@@ -6,10 +10,11 @@ install:
 	@mkdir -p ${HOME}/.dockerdata/log
 	@mkdir -p ${HOME}/.dockerdata/bin
 	@mkdir -p ${HOME}/.dockerdata/etc
-	@sed "s/{{user}}/${USER}/g" template/docker.tpl   > ${HOME}/.dockerdata/bin/docker
-	@sed "s/{{user}}/${USER}/g" template/dockerd.tpl  > ${HOME}/.dockerdata/bin/dockerd
-	@sed "s/{{user}}/${USER}/g" template/pipework.tpl > ${HOME}/.dockerdata/bin/pipework
+	@cp bin/docker       ${HOME}/.dockerdata/bin/doker
+	@cp bin/dockerd      ${HOME}/.dockerdata/bin/dokerd
 	@cp bin/dockit       ${HOME}/.dockerdata/bin/dockit
+	@cp bin/pipework     ${HOME}/.dockerdata/bin/pipework
+	@cp bin/dsvc         ${HOME}/.dockerdata/bin/dsvc
 	@cp etc/dockerd.conf ${HOME}/.dockerdata/etc/dockerd.conf
 	@cp etc/profile      ${HOME}/.dockerdata/etc/profile
 	@chmod +x ${HOME}/.dockerdata/bin/*
