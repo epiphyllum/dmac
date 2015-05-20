@@ -1,6 +1,5 @@
 image=hary/centos-demo
 version=
-start=/start
 
 ip=188.88.88.88
 mask=24
