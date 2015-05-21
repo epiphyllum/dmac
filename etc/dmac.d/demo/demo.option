@@ -1,0 +1,2 @@
+-v /home/tst/etc/dmac.d/demo:/demo
+-p 10.10.10.10:22222:22

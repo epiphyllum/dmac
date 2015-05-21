@@ -1,7 +1,7 @@
-dockit
+dmac
 ====
 
-### $HOME/etc/dsvc.d/demo/
+### $HOME/etc/dmac.d/demo/
 
     demo.main   : 配置IP地址/子网掩码, 启动image,
 

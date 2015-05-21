@@ -1,2 +1,0 @@
--v /home/tst/etc/dsvc.d/demo:/demo
--p 10.10.10.10:22222:22
