@@ -38,19 +38,11 @@ function color()
 }
 
 # 读取网关地址
-source $HOME/.dockerdata/etc/dockerd.conf
-gateway=$ip
-unset ip
-
-# bridge名称 
-br=br-${USER}
+gateway=172.17.42.1
 
 # 网关地址
-gateway=$(ip a list br-${USER}  | grep 'inet ' | awk '{print $2; }' | awk -F'/' '{print $1; }');
+gateway=$(ip a list docker0 | grep 'inet ' | awk '{print $2; }' | awk -F'/' '{print $1; }');
 
-
-# root来设置ip地址时用的pipework
-pipework=$HOME/.dockerdata/bin/pipework
 
 if [ ! $# = 2 ]; then
     echo "Usage:  dsvc svc_name run|start|stop|rm|clean" | color red bold;
@@ -112,7 +104,7 @@ function run {
 
     # 设置IP地址
     echo  "2. set ip address for container[$name]..." | color green bold;
-    cmd="ssh root $pipework br-${USER} $name $ip/$mask@$gateway 2>&1";
+    cmd="ssh root pipework docker0 $name $ip/$mask@$gateway 2>&1";
     # echo "cmd: [$cmd]";
     msg=$($cmd); errno=$?;
     if  [  $errno -ne 0 ] ; then 
@@ -123,11 +115,16 @@ function run {
     # 3. ssh进入容器配置
     echo "3. ssh into container[$name]  and config it..." | color green bold;
     if [ -f $HOME/etc/dsvc.d/$name/$name.config ]; then
-        # 
-        cmd="scp $HOME/etc/dsvc.d/$name/$name.config root@$ip:/dsvc-config.sh"; # echo "cmd=[$cmd]";
+        cmd="scp $HOME/etc/dsvc.d/$name/$name.config root@$ip:/dsvc-config.sh";
+        # echo "cmd=[$cmd]";
+        msg=$($cmd);
+        cmd="scp $HOME/etc/dsvc.d/$name/$name.run    root@$ip:/dsvc-run.sh";
+        # echo "cmd=[$cmd]";
         msg=$($cmd);
 
-        cmd="ssh root@$ip bash /dsvc-config.sh" # echo "cmd[$cmd]"
+        # 开始配置
+        cmd="ssh root@$ip bash /dsvc-config.sh"
+        # echo "cmd[$cmd]"
         msg=$($cmd); errno=$?;
         if  [  $errno -ne 0 ] ; then 
         echo "failed msg[$msg]" | color red bold;
@@ -137,7 +134,8 @@ function run {
 
     # 启动容器内服务
     echo "4. start service..." | color green bold;
-    cmd="ssh root@$ip '$start'";  # echo "cmd[$cmd]";
+    cmd="docker exec -d $name bash /dsvc-run.sh"
+    # echo "cmd[$cmd]";
     msg=$($cmd); errno=$?;
     if  [  $errno -ne 0 ] ; then 
         echo "failed msg[$msg]" | color red bold;
@@ -156,7 +154,7 @@ function start {
 
     # 2. 设置容器IP
     echo "2. set ip address for container[$name]..." | color green bold;
-    msg=$(ssh root $pipework $br $name $ip/$mask@$gateway 2>&1); errno=$?;
+    msg=$(ssh root pipework docker0 $name $ip/$mask@$gateway 2>&1); errno=$?;
     if  [  $errno -ne 0 ] ; then 
         echo "failed msg[$msg]" | color red bold;
         exit 0;
@@ -165,7 +163,7 @@ function start {
     # 3. ssh进入容器配置
     echo "3. if needed, ssh into container[$name]  and config it..." | color green bold;
     if [ -f $HOME/etc/dsvc.d/$name/$name.config ]; then
-        cmd="ssh root@$ip bash /dsvc-config.sh";  # echo "cmd[$cmd]";
+        cmd="ssh root@$ip bash /dsvc-config.sh"
         msg=$($cmd); errno=$?;
         if  [  $errno -ne 0 ] ; then 
             echo "failed msg[$msg]" | color red bold;
@@ -175,7 +173,7 @@ function start {
 
     # 4. 在容器内exec服务
     echo "4. start service..." | color green bold;
-    cmd="ssh root@$ip '$start'";
+    cmd="docker exec -d $name bash /dsvc-run.sh"
     # echo "cmd[$cmd]";
     msg=$($cmd); errno=$?;
     if  [  $errno -ne 0 ] ; then 

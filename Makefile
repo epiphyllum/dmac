@@ -1,3 +1,4 @@
+# 采用单独的docker daemon
 install:
 	@echo "install..."
 	mkdir -p ${HOME}/etc/dsvc.d/
@@ -32,4 +33,25 @@ install:
 	@banner done
 	@echo "to config dockerd, please edit ${HOME}/.dockerdata/etc/dockerd.conf";
 	@echo "to start dockerd,  please start ${HOME}/.dockerdata/bin/dockerd with root!!!"
+
+# 采用默认的docker daemon
+master:
+	@echo "install ..."
+	mkdir -p ${HOME}/etc/dsvc.d/
+	mkdir -p ${HOME}/.dockerdata/bin
+	mkdir -p ${HOME}/.dockerdata/etc
+	cp bin/dsvc.master ${HOME}/.dockerdata/bin/dsvc
+	chmod +x ${HOME}/.dockerdata/bin/*
+	cp etc/profile      ${HOME}/.dockerdata/etc/profile
+	cp -r etc/dsvc.d/*     ${HOME}/etc/dsvc.d/
+	chmod +x ${HOME}/.dockerdata/bin/*
+	@echo "###############################################"  >> ${HOME}/.bash_profile
+	@echo "# please do not edit those lines below"     >> ${HOME}/.bash_profile 
+	@echo "###############################################" >> ${HOME}/.bash_profile 
+	@echo 'export PATH=${HOME}/.dockerdata/bin:$$PATH' >> ${HOME}/.bash_profile
+	@echo ". ${HOME}/.dockerdata/etc/profile" >> ${HOME}/.bash_profile  
+	@echo "###############################################" >> ${HOME}/.bash_profile 
+	@echo "# please do not edit those lines above"  >> ${HOME}/.bash_profile 
+	@echo "###############################################" >> ${HOME}/.bash_profile 
+	@banner done
 
