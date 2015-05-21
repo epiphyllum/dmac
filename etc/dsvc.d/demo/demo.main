@@ -1,5 +1,7 @@
+# 启动image
 image=hary/centos-demo
 version=
 
-ip=188.88.88.88
+# 可配置多个IP
+ip=188.88.88.88,188.88.88.100
 mask=24
