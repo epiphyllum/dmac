@@ -122,22 +122,25 @@ function run {
 
     # 3. ssh进入容器配置
     echo "3. ssh into container[$name]  and config it..." | color green bold;
-    if [ -f $HOME/etc/dsvc.d/$name/$name.config ]; then
-        # 
-        cmd="scp $HOME/etc/dsvc.d/$name/$name.config root@$ip:/dsvc-config.sh"; # echo "cmd=[$cmd]";
-        msg=$($cmd);
+    cmd="scp $HOME/etc/dsvc.d/$name/$name.config root@$ip:/dsvc-config.sh"; # echo "cmd=[$cmd]";
+    msg=$($cmd);
 
-        cmd="ssh root@$ip bash /dsvc-config.sh" # echo "cmd[$cmd]"
-        msg=$($cmd); errno=$?;
-        if  [  $errno -ne 0 ] ; then 
+    cmd="scp $HOME/etc/dsvc.d/$name/$name.run    root@$ip:/dsvc-run.sh";    # echo "cmd=[$cmd]";
+    msg=$($cmd);
+
+    cmd="ssh root@$ip chmod +x /dsvc-*.sh" # echo "cmd[$cmd]"
+    msg=$($cmd); errno=$?;
+
+    cmd="ssh root@$ip /dsvc-config.sh" # echo "cmd[$cmd]"
+    msg=$($cmd); errno=$?;
+    if  [  $errno -ne 0 ] ; then 
         echo "failed msg[$msg]" | color red bold;
-            exit 0;
-        fi
+        exit 0;
     fi
 
     # 启动容器内服务
     echo "4. start service..." | color green bold;
-    cmd="ssh root@$ip '$start'";  # echo "cmd[$cmd]";
+    cmd="ssh root@$ip nohup /dsvc-run.sh start";  # echo "cmd[$cmd]";
     msg=$($cmd); errno=$?;
     if  [  $errno -ne 0 ] ; then 
         echo "failed msg[$msg]" | color red bold;
@@ -164,19 +167,16 @@ function start {
 
     # 3. ssh进入容器配置
     echo "3. if needed, ssh into container[$name]  and config it..." | color green bold;
-    if [ -f $HOME/etc/dsvc.d/$name/$name.config ]; then
-        cmd="ssh root@$ip bash /dsvc-config.sh";  # echo "cmd[$cmd]";
-        msg=$($cmd); errno=$?;
-        if  [  $errno -ne 0 ] ; then 
-            echo "failed msg[$msg]" | color red bold;
-            exit 0;
-        fi
+    cmd="ssh root@$ip /dsvc-config.sh";  # echo "cmd[$cmd]";
+    msg=$($cmd); errno=$?;
+    if  [  $errno -ne 0 ] ; then 
+        echo "failed msg[$msg]" | color red bold;
+        exit 0;
     fi
 
     # 4. 在容器内exec服务
     echo "4. start service..." | color green bold;
-    cmd="ssh root@$ip '$start'";
-    # echo "cmd[$cmd]";
+    cmd="ssh root@$ip nohup /dsvc-run.sh start"; # echo "cmd[$cmd]";
     msg=$($cmd); errno=$?;
     if  [  $errno -ne 0 ] ; then 
         echo "failed msg[$msg]" | color red bold;

@@ -31,8 +31,10 @@ install:
 	@echo "# please do not edit those lines above"  >> ${HOME}/.bash_profile 
 	@echo "###############################################" >> ${HOME}/.bash_profile 
 	@banner done
-	@echo "to config dockerd, please edit ${HOME}/.dockerdata/etc/dockerd.conf";
-	@echo "to start dockerd,  please start ${HOME}/.dockerdata/bin/dockerd with root!!!"
+	@echo "请确保: 1) ssh root@localhost的无密码登陆"
+	@echo "        2) dsvc配置的image安装了当前用户的public key"
+	@echo "        3) to config dockerd, please edit ${HOME}/.dockerdata/etc/dockerd.conf";
+	@echo "        4) to start dockerd,  please start ${HOME}/.dockerdata/bin/dockerd with root!!!"
 
 # 采用默认的docker daemon
 master:
@@ -54,4 +56,6 @@ master:
 	@echo "# please do not edit those lines above"  >> ${HOME}/.bash_profile 
 	@echo "###############################################" >> ${HOME}/.bash_profile 
 	@banner done
+	@echo "请确保: 1) ssh root@localhost的无密码登陆"
+	@echo "        2) dsvc配置的image安装了当前用户的public key"
 

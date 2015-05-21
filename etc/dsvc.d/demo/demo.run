@@ -1,9 +1,13 @@
 #!/bin/bash
 
+case $1 in
+    start) su demo -c "/demo/demo.sh start"
+    ;;
+    stop)  su demo -c "/demo/demo.sh stop"
+    ;;
+    *) exit 0
+    ;;
+esac
 
-while true; do
-   echo "hello world" >> /tmp/test.log;
-   sleep 2;
-done &
-
+exit 0;
 
