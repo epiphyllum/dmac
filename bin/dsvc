@@ -165,8 +165,9 @@ function start {
 
     # 2. 设置容器IP
     echo "2. set ip address for container[$name]..." | color green bold;
+    eid=0;
     for ipk in `echo $ip | sed 's/,/\n/'`; do
-        cmd="ssh root $pipework br-${USER} $name $ipk/$mask@$gateway 2>&1"; # echo "cmd: [$cmd]";
+        cmd="ssh root $pipework br-${USER} -i enc$eid $name $ipk/$mask@$gateway 2>&1"; # echo "cmd: [$cmd]";
         msg=$($cmd); errno=$?;
         if  [  $errno -ne 0 ] ; then
             echo "failed msg[$msg]" | color red bold;
@@ -175,6 +176,7 @@ function start {
         if [ "x$ipc" = "x" ]; then
             ipc=$ipk
         fi
+        ((eid=eid+1))
     done
 
     # 3. ssh进入容器配置
