@@ -96,7 +96,12 @@ function run {
     fi
 
     # msg=$(docker run -it -d --name $name --hostname $name "$option" $image:$version 2>&1); errno=$?;
-    cmd="docker run -it -d --name $name --hostname $name --net=none $option $image:$version";
+    if echo $option | grep -q ' -p '; then
+        # 带端口转发, 则不能使用--net=none
+        cmd="docker run -it -d --name $name --hostname $name $option $image:$version";
+    else 
+        cmd="docker run -it -d --name $name --hostname $name --net=none $option $image:$version";
+    fi
     # echo "cmd[$cmd]";
     msg=`$cmd`; 
     errno=$?;
@@ -126,7 +131,7 @@ function run {
     cmd="scp $HOME/etc/dmac.d/$name/$name.config root@$ipc:/dmac-config.sh"; # echo "cmd=[$cmd]";
     msg=$($cmd);
 
-    cmd="scp $HOME/etc/dmac.d/$name/$name.run    root@$ipc:/dmac-run.sh";    # echo "cmd=[$cmd]";
+    cmd="scp $HOME/etc/dmac.d/$name/$name.run root@$ipc:/dmac-run.sh";    # echo "cmd=[$cmd]";
     msg=$($cmd);
 
     cmd="ssh root@$ipc chmod +x /dmac-*.sh" # echo "cmd[$cmd]"
@@ -141,7 +146,7 @@ function run {
 
     # 启动容器内服务
     echo "4. start service..." | color green bold;
-    cmd="ssh root@$ipc nohup /dmac-run.sh start";  # echo "cmd[$cmd]";
+    cmd="ssh -fn root@$ipc /dmac-run.sh start > /dev/null 2>&1";  # echo "cmd[$cmd]";
     msg=$($cmd); errno=$?;
     if  [  $errno -ne 0 ] ; then 
         echo "failed msg[$msg]" | color red bold;
@@ -185,7 +190,7 @@ function start {
 
     # 4. 在容器内exec服务
     echo "4. start service..." | color green bold;
-    cmd="ssh root@$ipc nohup /dmac-run.sh start"; # echo "cmd[$cmd]";
+    cmd="ssh -fn root@$ipc /dmac-run.sh start > /dev/null 2>&1"; # echo "cmd[$cmd]";
     msg=$($cmd); errno=$?;
     if  [  $errno -ne 0 ] ; then 
         echo "failed msg[$msg]" | color red bold;
